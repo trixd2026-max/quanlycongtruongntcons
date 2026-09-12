@@ -11,6 +11,8 @@ import {
 } from '../utils/mockData';
 import { addDays, format, parseISO } from 'date-fns';
 import { vi } from 'date-fns/locale';
+import { isFirebaseConfigured } from '../lib/firebase';
+import { firebaseLogin, firebaseLogout, firebaseRegister, subscribeAuth } from '../lib/authService';
 
 interface AppState {
   project: Project | null;
@@ -57,7 +59,9 @@ interface AppContextType extends AppState {
   clearDemoData: () => void;
   seedDemoData: () => void;
   loginAs: (role: 'admin' | 'editor' | 'viewer') => void;
-  loginWithPassword: (email: string, password: string) => { ok: boolean; message: string };
+  loginWithPassword: (email: string, password: string) => Promise<{ ok: boolean; message: string }>;
+  registerWithPassword: (email: string, password: string, displayName: string, role?: 'admin' | 'editor' | 'viewer') => Promise<{ ok: boolean; message: string }>;
+  firebaseEnabled: boolean;
   logout: () => void;
   demoAccounts: DemoAccount[];
 }
@@ -67,9 +71,9 @@ const STORAGE_KEY = 'qlct_demo_data_v3';
 const AUTH_KEY = 'qlct_auth_session_v1';
 
 export const DEMO_ACCOUNTS: DemoAccount[] = [
-  { email: 'lehuutri@congtruong.vn', password: 'admin123', displayName: 'L\u00ea H\u1eefu Tr\u00ed', role: 'admin' },
-  { email: 'dotruong@congtruong.vn', password: 'editor123', displayName: 'Tr\u1ea7n V\u0103n H\u00f9ng (\u0110\u1ed9i tr\u01b0\u1edfng)', role: 'editor', teamIds: ['team-1'] },
-  { email: 'chudautu@example.com', password: 'viewer123', displayName: 'Ch\u1ee7 \u0111\u1ea7u t\u01b0 / T\u01b0 v\u1ea5n', role: 'viewer' },
+  { email: 'lehuutri@congtruong.vn', password: 'admin123', displayName: 'Le Huu Tri', role: 'admin' },
+  { email: 'dotruong@congtruong.vn', password: 'editor123', displayName: 'Tran Van Hung (Doi truong)', role: 'editor', teamIds: ['team-1'] },
+  { email: 'chudautu@example.com', password: 'viewer123', displayName: 'Chu dau tu / Tu van', role: 'viewer' },
 ];
 
 function userFromAccount(acc: DemoAccount, projectId: string): AppUser {
@@ -126,7 +130,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
       };
       localStorage.setItem(STORAGE_KEY, JSON.stringify(toSave));
     }
-    if (state.currentUser) {
+    if (state.currentUser && state.isDemoMode) {
       localStorage.setItem(AUTH_KEY, JSON.stringify(state.currentUser));
     }
   }, [state]);
@@ -141,7 +145,9 @@ export function AppProvider({ children }: { children: ReactNode }) {
       ...prev, project, teams, workers, scoreRules, transactions: [], teamBonuses: [],
       locks: [], shiftAssignments: [],
       currentUser: prev.currentUser ?? admin,
-      connectionStatus: 'not_configured', isDemoMode: true, selectedWeek: 1,
+      connectionStatus: isFirebaseConfigured() ? 'synced' : 'not_configured',
+      isDemoMode: !isFirebaseConfigured(),
+      selectedWeek: 1,
     }));
   }, []);
 
@@ -149,13 +155,32 @@ export function AppProvider({ children }: { children: ReactNode }) {
     localStorage.removeItem(STORAGE_KEY);
     setState(s => ({
       project: null, teams: [], workers: [], scoreRules: [], transactions: [], teamBonuses: [],
-      locks: [], shiftAssignments: [], currentUser: s.currentUser, connectionStatus: 'not_configured',
-      selectedWeek: 1, selectedMonth: 1, gradeThresholds: DEFAULT_GRADE_THRESHOLDS, isDemoMode: true,
+      locks: [], shiftAssignments: [], currentUser: s.currentUser,
+      connectionStatus: isFirebaseConfigured() ? 'synced' : 'not_configured',
+      selectedWeek: 1, selectedMonth: 1, gradeThresholds: DEFAULT_GRADE_THRESHOLDS,
+      isDemoMode: !isFirebaseConfigured(),
     }));
   }, []);
 
   useEffect(() => {
-    if (!state.project && state.isDemoMode) seedDemoData();
+    if (!isFirebaseConfigured()) {
+      setState(s => ({ ...s, connectionStatus: 'not_configured', isDemoMode: true }));
+      return;
+    }
+    setState(s => ({ ...s, connectionStatus: 'connecting', isDemoMode: false }));
+    const unsub = subscribeAuth((user) => {
+      setState(s => ({
+        ...s,
+        currentUser: user,
+        connectionStatus: 'synced',
+        isDemoMode: false,
+      }));
+    });
+    return () => { unsub && unsub(); };
+  }, []);
+
+  useEffect(() => {
+    if (!state.project) seedDemoData();
   }, []);
 
   const getWeekRange = useCallback((weekNumber: number): WeekRange => {
@@ -211,7 +236,6 @@ export function AppProvider({ children }: { children: ReactNode }) {
       t => t.weekNumber === week && !t.isUndone && (t.category === 'safety' || (t.category === 'penalty' && t.points < 0))
         && visibleWorkers.some(w => w.id === t.workerId)
     ).length;
-
     const teamRankings = getVisibleTeams().map(team => {
       const pts = getTeamWeekPoints(team.id, week);
       const violations = state.transactions.filter(t => t.teamId === team.id && t.weekNumber === week && !t.isUndone && t.points < 0).length;
@@ -221,18 +245,16 @@ export function AppProvider({ children }: { children: ReactNode }) {
       };
     }).sort((a, b) => b.totalPoints - a.totalPoints || a.violationCount - b.violationCount)
       .map((t, i) => ({ ...t, rank: i + 1 }));
-
     const enteredIds = new Set(state.transactions.filter(t => t.weekNumber === week && !t.isUndone).map(t => t.workerId));
     const missing = visibleWorkers.filter(w => !enteredIds.has(w.id));
     const alerts = missing.slice(0, 20).map(w => ({
       id: `missing-${w.id}-w${week}`,
       type: 'missing_data' as const,
       severity: 'medium' as const,
-      message: `${w.fullName} (${w.code}) ch\u01b0a c\u00f3 nh\u1eadt k\u00fd KPI tu\u1ea7n ${week}`,
+      message: `${w.fullName} (${w.code}) chua co nhat ky KPI tuan ${week}`,
       workerId: w.id,
       teamId: w.teamId,
     }));
-
     return {
       totalWorkers: visibleWorkers.length,
       totalSafetyViolations: safetyViolations,
@@ -256,6 +278,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const value: AppContextType = {
     ...state,
     demoAccounts: DEMO_ACCOUNTS,
+    firebaseEnabled: isFirebaseConfigured(),
     setSelectedWeek: (w) => setState(s => ({ ...s, selectedWeek: w })),
     setSelectedMonth: (m) => setState(s => ({ ...s, selectedMonth: m })),
     addWorker: (w) => setState(s => ({
@@ -314,10 +337,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
       const filtered = s.shiftAssignments.filter(
         x => !(x.date === a.date && x.shiftKey === a.shiftKey && x.workerId === a.workerId)
       );
-      return {
-        ...s,
-        shiftAssignments: [...filtered, { ...a, id: uuidv4(), createdAt: new Date().toISOString() }],
-      };
+      return { ...s, shiftAssignments: [...filtered, { ...a, id: uuidv4(), createdAt: new Date().toISOString() }] };
     }),
     removeShiftAssignment: (id) => setState(s => ({
       ...s, shiftAssignments: s.shiftAssignments.filter(x => x.id !== id),
@@ -334,21 +354,39 @@ export function AppProvider({ children }: { children: ReactNode }) {
         currentUser: { ...userFromAccount({ ...acc, teamIds }, state.project!.id), teamIds },
       }));
     },
-    loginWithPassword: (email, password) => {
+    loginWithPassword: async (email, password) => {
+      if (isFirebaseConfigured()) {
+        const res = await firebaseLogin(email, password);
+        if (res.ok && res.user) {
+          setState(s => ({ ...s, currentUser: res.user!, connectionStatus: 'synced', isDemoMode: false }));
+        }
+        return { ok: res.ok, message: res.message };
+      }
       const acc = DEMO_ACCOUNTS.find(
         a => a.email.toLowerCase() === email.trim().toLowerCase() && a.password === password
       );
-      if (!acc) return { ok: false, message: 'Email ho\u1eb7c m\u1eadt kh\u1ea9u kh\u00f4ng \u0111\u00fang' };
-      if (!state.project) return { ok: false, message: 'Ch\u01b0a c\u00f3 d\u1eef li\u1ec7u d\u1ef1 \u00e1n' };
+      if (!acc) return { ok: false, message: 'Email hoac mat khau khong dung (Demo)' };
+      if (!state.project) return { ok: false, message: 'Chua co du lieu du an' };
       const teamIds = acc.role === 'editor' ? state.teams.slice(0, 1).map(t => t.id) : acc.teamIds;
       setState(s => ({
         ...s,
         currentUser: { ...userFromAccount({ ...acc, teamIds }, state.project!.id), teamIds },
       }));
-      return { ok: true, message: '\u0110\u0103ng nh\u1eadp th\u00e0nh c\u00f4ng' };
+      return { ok: true, message: 'Dang nhap Demo thanh cong' };
+    },
+    registerWithPassword: async (email, password, displayName, role = 'viewer') => {
+      if (!isFirebaseConfigured()) {
+        return { ok: false, message: 'Chi dang ky khi da cau hinh Firebase' };
+      }
+      const res = await firebaseRegister(email, password, displayName, role);
+      if (res.ok && res.user) {
+        setState(s => ({ ...s, currentUser: res.user!, connectionStatus: 'synced', isDemoMode: false }));
+      }
+      return { ok: res.ok, message: res.message };
     },
     logout: () => {
       localStorage.removeItem(AUTH_KEY);
+      if (isFirebaseConfigured()) void firebaseLogout();
       setState(s => ({ ...s, currentUser: null }));
     },
   };

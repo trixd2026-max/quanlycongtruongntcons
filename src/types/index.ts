@@ -181,3 +181,31 @@ export interface DemoAccount {
   role: UserRole;
   teamIds?: string[];
 }
+
+export interface ProgressItem {
+  id: string;
+  projectId: string;
+  name: string;
+  unit: string;
+  planned: number;
+  actual: number;
+  weekNumber: number;
+  teamId?: string;
+  note?: string;
+  status: 'on_track' | 'delayed' | 'completed' | 'not_started';
+  createdAt: string;
+  updatedAt: string;
+  updatedBy?: string;
+}
+
+export interface AuditLog {
+  id: string;
+  projectId: string;
+  action: string;
+  detail: string;
+  entityType?: string;
+  entityId?: string;
+  userId: string;
+  userName: string;
+  createdAt: string;
+}

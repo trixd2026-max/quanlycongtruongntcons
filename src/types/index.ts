@@ -160,3 +160,24 @@ export interface WeekRange {
   endDate: string;
   days: { date: string; dayOfWeek: number; label: string }[];
 }
+
+export interface ShiftAssignment {
+  id: string;
+  projectId: string;
+  weekNumber: number;
+  date: string;
+  shiftKey: string;
+  workerId: string;
+  teamId: string;
+  note?: string;
+  createdAt: string;
+  createdBy: string;
+}
+
+export interface DemoAccount {
+  email: string;
+  password: string;
+  displayName: string;
+  role: UserRole;
+  teamIds?: string[];
+}

@@ -62,24 +62,40 @@ export function ProgressPage() {
   };
 
   const save = () => {
-    if (!project || !form.name.trim()) return;
-    const status = calcStatus(Number(form.planned), Number(form.actual));
-    if (editing) {
-      updateProgressItem(editing.id, {
-        name: form.name.trim(), unit: form.unit,
-        planned: Number(form.planned), actual: Number(form.actual),
-        teamId: form.teamId || undefined, note: form.note, status,
-        updatedBy: currentUser?.id,
-      });
-    } else {
-      addProgressItem({
-        projectId: project.id, name: form.name.trim(), unit: form.unit,
-        planned: Number(form.planned), actual: Number(form.actual),
-        weekNumber: selectedWeek, teamId: form.teamId || undefined,
-        note: form.note, status, updatedBy: currentUser?.id,
-      });
+    if (!form.name.trim()) {
+      alert('Vui lòng nhập tên hạng mục');
+      return;
     }
-    setShowForm(false);
+    if (!project) {
+      alert('Chưa có dữ liệu công trình. Vui lòng tải lại trang.');
+      return;
+    }
+    if (typeof addProgressItem !== 'function') {
+      alert('Phiên bản app chưa đồng bộ. Vui lòng hard refresh (Ctrl+Shift+R).');
+      return;
+    }
+    const status = calcStatus(Number(form.planned), Number(form.actual));
+    try {
+      if (editing) {
+        updateProgressItem(editing.id, {
+          name: form.name.trim(), unit: form.unit,
+          planned: Number(form.planned), actual: Number(form.actual),
+          teamId: form.teamId || undefined, note: form.note, status,
+          updatedBy: currentUser?.id,
+        });
+      } else {
+        addProgressItem({
+          projectId: project.id, name: form.name.trim(), unit: form.unit,
+          planned: Number(form.planned), actual: Number(form.actual),
+          weekNumber: selectedWeek, teamId: form.teamId || undefined,
+          note: form.note, status, updatedBy: currentUser?.id,
+        });
+      }
+      setShowForm(false);
+    } catch (e) {
+      console.error(e);
+      alert('Không lưu được hạng mục.');
+    }
   };
 
   const weeks = Array.from({ length: project?.totalWeeks || 12 }, (_, i) => i + 1);
@@ -200,8 +216,8 @@ export function ProgressPage() {
             <textarea className="w-full border rounded-lg px-3 py-2 text-sm" rows={2} placeholder="Ghi chú"
               value={form.note} onChange={e => setForm(f => ({ ...f, note: e.target.value }))} />
             <div className="flex justify-end gap-2 pt-1">
-              <button onClick={() => setShowForm(false)} className="px-3 py-2 text-sm rounded-lg bg-gray-100">Hủy</button>
-              <button onClick={save} className="px-3 py-2 text-sm rounded-lg bg-primary text-white">Lưu</button>
+              <button type="button" onClick={() => setShowForm(false)} className="px-3 py-2 text-sm rounded-lg bg-gray-100">Hủy</button>
+              <button type="button" onClick={save} className="px-3 py-2 text-sm rounded-lg bg-primary text-white">Lưu</button>
             </div>
           </div>
         </div>

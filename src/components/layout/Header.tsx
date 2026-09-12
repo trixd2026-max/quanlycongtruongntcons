@@ -30,6 +30,7 @@ export function Header({ onMenuClick }: HeaderProps) {
               </h1>
               <p className="text-sm text-blue-200">
                 {project?.packageName} · Chỉ huy: {project?.commanderName}
+                {project?.phone ? ` · ${project.phone}` : ''}
               </p>
             </div>
           </div>

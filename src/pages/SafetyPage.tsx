@@ -38,7 +38,13 @@ export function SafetyPage() {
                 <td className="px-4 py-3 text-xs text-gray-500">{details.map(d => d.ruleName).join('; ')}</td>
               </tr>
             ))}
-            {byWorker.length === 0 && <tr><td colSpan={5} className="px-4 py-12 text-center text-gray-400">Không có vi phạm trong tuần này</td></tr>}
+            {byWorker.length === 0 && (
+              <tr>
+                <td colSpan={5} className="px-4 py-12 text-center text-gray-400">
+                  Không có vi phạm trong tuần này
+                </td>
+              </tr>
+            )}
           </tbody>
         </table>
       </div>

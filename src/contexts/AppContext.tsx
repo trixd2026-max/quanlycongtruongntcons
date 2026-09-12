@@ -3,7 +3,7 @@ import { v4 as uuidv4 } from 'uuid';
 import type {
   Project, Team, Worker, ScoreRule, ScoreTransaction, TeamBonus,
   WeeklyLock, AppUser, ConnectionStatus, DashboardStats, WeekRange, GradeThresholds,
-  ShiftAssignment, DemoAccount,
+  ShiftAssignment, DemoAccount, ProgressItem, AuditLog,
 } from '../types';
 import {
   createMockProject, createMockTeams, createMockWorkers,
@@ -13,6 +13,9 @@ import { addDays, format, parseISO } from 'date-fns';
 import { vi } from 'date-fns/locale';
 import { isFirebaseConfigured } from '../lib/firebase';
 import { firebaseLogin, firebaseLogout, firebaseRegister, subscribeAuth } from '../lib/authService';
+import {
+  fsSet, fsDelete, fsSaveProject, fsAddAudit, subscribeProjectData, seedProjectToFirestore,
+} from '../lib/firestoreSync';
 
 interface AppState {
   project: Project | null;
@@ -23,6 +26,8 @@ interface AppState {
   teamBonuses: TeamBonus[];
   locks: WeeklyLock[];
   shiftAssignments: ShiftAssignment[];
+  progressItems: ProgressItem[];
+  auditLogs: AuditLog[];
   currentUser: AppUser | null;
   connectionStatus: ConnectionStatus;
   selectedWeek: number;
@@ -50,6 +55,11 @@ interface AppContextType extends AppState {
   addTeamBonus: (bonus: Omit<TeamBonus, 'id' | 'createdAt'>) => void;
   assignShift: (a: Omit<ShiftAssignment, 'id' | 'createdAt'>) => void;
   removeShiftAssignment: (id: string) => void;
+  addProgressItem: (item: Omit<ProgressItem, 'id' | 'createdAt' | 'updatedAt'>) => void;
+  updateProgressItem: (id: string, data: Partial<ProgressItem>) => void;
+  deleteProgressItem: (id: string) => void;
+  pushAudit: (action: string, detail: string, entityType?: string, entityId?: string) => void;
+  syncToCloud: () => Promise<void>;
   getWeekRange: (weekNumber: number) => WeekRange;
   getWorkerWeekPoints: (workerId: string, week: number) => { plus: number; minus: number; total: number };
   getTeamWeekPoints: (teamId: string, week: number) => { personal: number; bonus: number; total: number };
@@ -105,6 +115,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
         return {
           ...parsed,
           shiftAssignments: parsed.shiftAssignments || [],
+          progressItems: parsed.progressItems || [],
+          auditLogs: parsed.auditLogs || [],
           currentUser: currentUser ?? parsed.currentUser ?? null,
           connectionStatus: 'not_configured' as ConnectionStatus,
           isDemoMode: true,
@@ -113,7 +125,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     }
     return {
       project: null, teams: [], workers: [], scoreRules: [], transactions: [],
-      teamBonuses: [], locks: [], shiftAssignments: [],
+      teamBonuses: [], locks: [], shiftAssignments: [], progressItems: [], auditLogs: [],
       currentUser, connectionStatus: 'not_configured' as ConnectionStatus,
       selectedWeek: 1, selectedMonth: 1, gradeThresholds: DEFAULT_GRADE_THRESHOLDS, isDemoMode: true,
     };
@@ -125,12 +137,13 @@ export function AppProvider({ children }: { children: ReactNode }) {
         project: state.project, teams: state.teams, workers: state.workers,
         scoreRules: state.scoreRules, transactions: state.transactions, teamBonuses: state.teamBonuses,
         locks: state.locks, shiftAssignments: state.shiftAssignments,
+        progressItems: state.progressItems || [], auditLogs: state.auditLogs || [],
         selectedWeek: state.selectedWeek, selectedMonth: state.selectedMonth,
         gradeThresholds: state.gradeThresholds, isDemoMode: true,
       };
       localStorage.setItem(STORAGE_KEY, JSON.stringify(toSave));
     }
-    if (state.currentUser && state.isDemoMode) {
+    if (state.currentUser) {
       localStorage.setItem(AUTH_KEY, JSON.stringify(state.currentUser));
     }
   }, [state]);
@@ -143,7 +156,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     const admin = createMockAdmin(project.id);
     setState(prev => ({
       ...prev, project, teams, workers, scoreRules, transactions: [], teamBonuses: [],
-      locks: [], shiftAssignments: [],
+      locks: [], shiftAssignments: [], progressItems: [], auditLogs: [],
       currentUser: prev.currentUser ?? admin,
       connectionStatus: isFirebaseConfigured() ? 'synced' : 'not_configured',
       isDemoMode: !isFirebaseConfigured(),
@@ -155,7 +168,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     localStorage.removeItem(STORAGE_KEY);
     setState(s => ({
       project: null, teams: [], workers: [], scoreRules: [], transactions: [], teamBonuses: [],
-      locks: [], shiftAssignments: [], currentUser: s.currentUser,
+      locks: [], shiftAssignments: [], progressItems: [], auditLogs: [], currentUser: s.currentUser,
       connectionStatus: isFirebaseConfigured() ? 'synced' : 'not_configured',
       selectedWeek: 1, selectedMonth: 1, gradeThresholds: DEFAULT_GRADE_THRESHOLDS,
       isDemoMode: !isFirebaseConfigured(),
@@ -169,15 +182,33 @@ export function AppProvider({ children }: { children: ReactNode }) {
     }
     setState(s => ({ ...s, connectionStatus: 'connecting', isDemoMode: false }));
     const unsub = subscribeAuth((user) => {
-      setState(s => ({
-        ...s,
-        currentUser: user,
-        connectionStatus: 'synced',
-        isDemoMode: false,
-      }));
+      setState(s => ({ ...s, currentUser: user, connectionStatus: 'synced', isDemoMode: false }));
     });
     return () => { unsub && unsub(); };
   }, []);
+
+  useEffect(() => {
+    if (!isFirebaseConfigured() || !state.project?.id) return;
+    const projectId = state.project.id;
+    setState(s => ({ ...s, connectionStatus: 'connecting', isDemoMode: false }));
+    const unsubs = subscribeProjectData(projectId, {
+      onProject: (proj) => { if (proj) setState(s => ({ ...s, project: proj, connectionStatus: 'synced' })); },
+      onTeams: (teams) => setState(s => ({ ...s, teams, connectionStatus: 'synced' })),
+      onWorkers: (workers) => setState(s => ({ ...s, workers, connectionStatus: 'synced' })),
+      onRules: (scoreRules) => setState(s => ({ ...s, scoreRules, connectionStatus: 'synced' })),
+      onTransactions: (transactions) => setState(s => ({ ...s, transactions, connectionStatus: 'synced' })),
+      onLocks: (locks) => setState(s => ({ ...s, locks, connectionStatus: 'synced' })),
+      onShifts: (shiftAssignments) => setState(s => ({ ...s, shiftAssignments, connectionStatus: 'synced' })),
+      onProgress: (progressItems) => setState(s => ({ ...s, progressItems: progressItems || [], connectionStatus: 'synced' })),
+      onBonuses: (teamBonuses) => setState(s => ({ ...s, teamBonuses, connectionStatus: 'synced' })),
+      onAudit: (auditLogs) => {
+        const sorted = [...(auditLogs || [])].sort((a, b) => (b.createdAt || '').localeCompare(a.createdAt || ''));
+        setState(s => ({ ...s, auditLogs: sorted.slice(0, 200), connectionStatus: 'synced' }));
+      },
+      onError: () => setState(s => ({ ...s, connectionStatus: 'error' })),
+    });
+    return () => unsubs.forEach(u => u());
+  }, [state.project?.id]);
 
   useEffect(() => {
     if (!state.project) seedDemoData();
@@ -277,6 +308,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
   const value: AppContextType = {
     ...state,
+    progressItems: state.progressItems || [],
+    auditLogs: state.auditLogs || [],
     demoAccounts: DEMO_ACCOUNTS,
     firebaseEnabled: isFirebaseConfigured(),
     setSelectedWeek: (w) => setState(s => ({ ...s, selectedWeek: w })),
@@ -301,34 +334,87 @@ export function AppProvider({ children }: { children: ReactNode }) {
     })),
     addTransaction: (tx) => {
       if (isWeekLocked(tx.weekNumber)) return;
-      setState(s => ({
-        ...s, transactions: [...s.transactions, { ...tx, id: uuidv4(), createdAt: new Date().toISOString() }],
-      }));
+      const id = uuidv4();
+      const row = { ...tx, id, createdAt: new Date().toISOString() };
+      setState(s => {
+        const log: AuditLog = {
+          id: uuidv4(), projectId: s.project?.id || '', action: 'ADD_SCORE',
+          detail: `${row.ruleName} ${row.points > 0 ? '+' : ''}${row.points}`,
+          entityType: 'transaction', entityId: id,
+          userId: s.currentUser?.id || '', userName: s.currentUser?.displayName || '',
+          createdAt: new Date().toISOString(),
+        };
+        if (s.project) {
+          void fsSet(s.project.id, 'transactions', id, row as unknown as Record<string, unknown>);
+          void fsAddAudit(s.project.id, log);
+        }
+        return { ...s, transactions: [...s.transactions, row], auditLogs: [log, ...(s.auditLogs || [])].slice(0, 200) };
+      });
     },
-    undoTransaction: (id) => setState(s => ({
-      ...s, transactions: s.transactions.map(t => t.id === id ? { ...t, isUndone: true } : t),
-    })),
-    lockWeek: (week) => setState(s => ({
-      ...s, locks: [...s.locks.filter(l => !(l.weekNumber === week && !l.date)), {
+    undoTransaction: (id) => setState(s => {
+      const tx = s.transactions.find(t => t.id === id);
+      const transactions = s.transactions.map(t => t.id === id ? { ...t, isUndone: true } : t);
+      const log: AuditLog = {
+        id: uuidv4(), projectId: s.project?.id || '', action: 'UNDO_SCORE',
+        detail: tx ? `Huy diem ${tx.ruleName}` : `Huy ${id}`,
+        entityType: 'transaction', entityId: id,
+        userId: s.currentUser?.id || '', userName: s.currentUser?.displayName || '',
+        createdAt: new Date().toISOString(),
+      };
+      if (s.project && tx) {
+        void fsSet(s.project.id, 'transactions', id, { ...tx, isUndone: true } as unknown as Record<string, unknown>);
+        void fsAddAudit(s.project.id, log);
+      }
+      return { ...s, transactions, auditLogs: [log, ...(s.auditLogs || [])].slice(0, 200) };
+    }),
+    lockWeek: (week) => setState(s => {
+      const lock = {
         id: `${s.project!.id}_w${week}`, projectId: s.project!.id, weekNumber: week,
         isLocked: true, lockedAt: new Date().toISOString(), lockedBy: s.currentUser?.id,
-      }],
-    })),
-    unlockWeek: (week) => setState(s => ({
-      ...s, locks: s.locks.map(l => l.weekNumber === week && !l.date
-        ? { ...l, isLocked: false, unlockedAt: new Date().toISOString(), unlockedBy: s.currentUser?.id } : l),
-    })),
+      };
+      const log: AuditLog = {
+        id: uuidv4(), projectId: s.project!.id, action: 'LOCK_WEEK', detail: `Khoa tuan ${week}`,
+        entityType: 'lock', entityId: lock.id,
+        userId: s.currentUser?.id || '', userName: s.currentUser?.displayName || '',
+        createdAt: new Date().toISOString(),
+      };
+      void fsSet(s.project!.id, 'locks', lock.id, lock as unknown as Record<string, unknown>);
+      void fsAddAudit(s.project!.id, log);
+      return { ...s, locks: [...s.locks.filter(l => !(l.weekNumber === week && !l.date)), lock], auditLogs: [log, ...(s.auditLogs || [])].slice(0, 200) };
+    }),
+    unlockWeek: (week) => setState(s => {
+      const locks = s.locks.map(l => l.weekNumber === week && !l.date
+        ? { ...l, isLocked: false, unlockedAt: new Date().toISOString(), unlockedBy: s.currentUser?.id } : l);
+      const lock = locks.find(l => l.weekNumber === week && !l.date);
+      const log: AuditLog = {
+        id: uuidv4(), projectId: s.project!.id, action: 'UNLOCK_WEEK', detail: `Mo khoa tuan ${week}`,
+        entityType: 'lock', entityId: lock?.id,
+        userId: s.currentUser?.id || '', userName: s.currentUser?.displayName || '',
+        createdAt: new Date().toISOString(),
+      };
+      if (lock) void fsSet(s.project!.id, 'locks', lock.id, lock as unknown as Record<string, unknown>);
+      void fsAddAudit(s.project!.id, log);
+      return { ...s, locks, auditLogs: [log, ...(s.auditLogs || [])].slice(0, 200) };
+    }),
     isWeekLocked,
-    updateProject: (data) => setState(s => ({
-      ...s, project: s.project ? { ...s.project, ...data, updatedAt: new Date().toISOString() } : null,
-    })),
+    updateProject: (data) => setState(s => {
+      if (!s.project) return s;
+      const project = { ...s.project, ...data, updatedAt: new Date().toISOString() };
+      void fsSaveProject(project);
+      const log: AuditLog = {
+        id: uuidv4(), projectId: project.id, action: 'UPDATE_PROJECT', detail: 'Cap nhat cai dat',
+        entityType: 'project', entityId: project.id,
+        userId: s.currentUser?.id || '', userName: s.currentUser?.displayName || '',
+        createdAt: new Date().toISOString(),
+      };
+      void fsAddAudit(project.id, log);
+      return { ...s, project, auditLogs: [log, ...(s.auditLogs || [])].slice(0, 200) };
+    }),
     updateScoreRule: (id, data) => setState(s => ({
       ...s, scoreRules: s.scoreRules.map(r => r.id === id ? { ...r, ...data, updatedAt: new Date().toISOString() } : r),
     })),
     addScoreRule: (rule) => setState(s => ({
-      ...s, scoreRules: [...s.scoreRules, {
-        ...rule, id: uuidv4(), createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(),
-      }],
+      ...s, scoreRules: [...s.scoreRules, { ...rule, id: uuidv4(), createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() }],
     })),
     addTeamBonus: (bonus) => setState(s => ({
       ...s, teamBonuses: [...s.teamBonuses, { ...bonus, id: uuidv4(), createdAt: new Date().toISOString() }],
@@ -342,6 +428,52 @@ export function AppProvider({ children }: { children: ReactNode }) {
     removeShiftAssignment: (id) => setState(s => ({
       ...s, shiftAssignments: s.shiftAssignments.filter(x => x.id !== id),
     })),
+    addProgressItem: (item) => setState(s => {
+      const row: ProgressItem = {
+        ...item, id: uuidv4(),
+        createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(),
+      };
+      if (s.project) void fsSet(s.project.id, 'progress', row.id, row as unknown as Record<string, unknown>);
+      return { ...s, progressItems: [...(s.progressItems || []), row] };
+    }),
+    updateProgressItem: (id, data) => setState(s => {
+      const progressItems = (s.progressItems || []).map(p =>
+        p.id === id ? { ...p, ...data, updatedAt: new Date().toISOString() } : p
+      );
+      const row = progressItems.find(p => p.id === id);
+      if (row && s.project) void fsSet(s.project.id, 'progress', id, row as unknown as Record<string, unknown>);
+      return { ...s, progressItems };
+    }),
+    deleteProgressItem: (id) => setState(s => {
+      if (s.project) void fsDelete(s.project.id, 'progress', id);
+      return { ...s, progressItems: (s.progressItems || []).filter(p => p.id !== id) };
+    }),
+    pushAudit: (action, detail, entityType, entityId) => setState(s => {
+      const log: AuditLog = {
+        id: uuidv4(), projectId: s.project?.id || '', action, detail,
+        entityType, entityId,
+        userId: s.currentUser?.id || '', userName: s.currentUser?.displayName || '',
+        createdAt: new Date().toISOString(),
+      };
+      if (s.project) void fsAddAudit(s.project.id, log);
+      return { ...s, auditLogs: [log, ...(s.auditLogs || [])].slice(0, 200) };
+    }),
+    syncToCloud: async () => {
+      if (!state.project || !isFirebaseConfigured()) return;
+      await seedProjectToFirestore({
+        project: state.project,
+        teams: state.teams,
+        workers: state.workers,
+        scoreRules: state.scoreRules,
+      });
+      for (const t of state.transactions) {
+        await fsSet(state.project.id, 'transactions', t.id, t as unknown as Record<string, unknown>);
+      }
+      for (const p of (state.progressItems || [])) {
+        await fsSet(state.project.id, 'progress', p.id, p as unknown as Record<string, unknown>);
+      }
+      setState(s => ({ ...s, connectionStatus: 'synced', isDemoMode: false }));
+    },
     getWeekRange, getWorkerWeekPoints, getTeamWeekPoints, getDashboardStats,
     getVisibleWorkers, getVisibleTeams,
     clearDemoData, seedDemoData,

@@ -1,112 +1,113 @@
 import { useApp } from '../contexts/AppContext';
-import { Users, AlertTriangle, TrendingDown, Trophy, ClipboardCheck, Award } from 'lucide-react';
-import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend } from 'recharts';
+import { downloadCsv } from '../utils/export';
+import { Users, AlertTriangle, TrendingUp, ClipboardList, Bell, FileSpreadsheet } from 'lucide-react';
 
 export function DashboardPage() {
-  const { project, selectedWeek, setSelectedWeek, getDashboardStats, getWeekRange } = useApp();
-  const stats = getDashboardStats();
-  const weekRange = getWeekRange(selectedWeek);
-  if (!project) return <div className="flex items-center justify-center h-64"><p className="text-gray-500">Đang tải...</p></div>;
+  const { project, selectedWeek, setSelectedWeek, getDashboardStats, getVisibleTeams, currentUser } = useApp();
+  if (!project) return null;
 
-  const chartData = stats.teamRankings.map(t => ({
-    name: t.teamName.replace('Tổ ', ''), 'Điểm cá nhân': t.personalPoints, 'Điểm thưởng': t.teamBonus, 'Tổng': t.totalPoints,
-  }));
+  const stats = getDashboardStats();
+  const teams = getVisibleTeams();
+
+  const exportRank = () => {
+    downloadCsv(
+      `XepHang_Tuan_${selectedWeek}`,
+      ['Hạng', 'Tổ đội', 'Điểm CN', 'Thưởng tổ', 'Tổng', 'Vi phạm'],
+      stats.teamRankings.map(r => [r.rank, r.teamName, r.personalPoints, r.teamBonus, r.totalPoints, r.violationCount])
+    );
+  };
 
   return (
-    <div className="space-y-6">
-      <div className="bg-white rounded-xl shadow-sm p-4 flex flex-wrap items-center justify-between gap-4">
+    <div className="space-y-4">
+      <div className="bg-white rounded-xl shadow-sm p-4 flex flex-wrap items-center justify-between gap-3">
         <div>
-          <h2 className="text-xl font-bold text-gray-800">Tổng quan tháng</h2>
-          <p className="text-sm text-gray-500">Tuần {selectedWeek}: {weekRange.startDate} → {weekRange.endDate}</p>
+          <h2 className="text-xl font-bold text-gray-800">Tổng quan tháng / tuần</h2>
+          <p className="text-sm text-gray-500">{project.name}</p>
         </div>
         <div className="flex items-center gap-2">
-          <label className="text-sm font-medium text-gray-600">Tuần:</label>
-          <select value={selectedWeek} onChange={e => setSelectedWeek(Number(e.target.value))}
-            className="border border-gray-300 rounded-lg px-3 py-1.5 text-sm focus:ring-2 focus:ring-primary">
-            {Array.from({ length: project.totalWeeks }, (_, i) => (
-              <option key={i + 1} value={i + 1}>Tuần {i + 1}</option>
+          <select value={selectedWeek} onChange={e => setSelectedWeek(Number(e.target.value))} className="border rounded-lg px-3 py-2 text-sm">
+            {Array.from({ length: project.totalWeeks }, (_, i) => i + 1).map(w => (
+              <option key={w} value={w}>Tuần {w}</option>
             ))}
           </select>
+          <button onClick={exportRank} className="flex items-center gap-1 px-3 py-2 text-sm rounded-lg bg-green-600 text-white">
+            <FileSpreadsheet size={16} /> Excel xếp hạng
+          </button>
         </div>
       </div>
 
-      <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-4">
-        <StatCard icon={Users} label="Quân số" value={stats.totalWorkers} color="bg-blue-500" />
-        <StatCard icon={AlertTriangle} label="Vi phạm ATLĐ" value={stats.totalSafetyViolations} color="bg-red-500" />
-        <StatCard icon={TrendingDown} label="Lỗi chất lượng" value={stats.totalQualityIssues} color="bg-orange-500" />
-        <StatCard icon={Award} label="Điểm cá nhân" value={stats.totalPersonalPoints} color="bg-green-500" />
-        <StatCard icon={Trophy} label="Điểm thưởng tổ" value={stats.totalTeamBonus} color="bg-yellow-500" />
-        <StatCard icon={ClipboardCheck} label="Nhập nhật ký" value={`${stats.dataEntryProgress.percent}%`}
-          sub={`${stats.dataEntryProgress.entered}/${stats.dataEntryProgress.total}`} color="bg-purple-500" />
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+        <div className="bg-white rounded-xl shadow-sm p-4">
+          <div className="flex items-center gap-2 text-primary mb-1"><Users size={18} /><span className="text-xs font-medium">Công nhân</span></div>
+          <p className="text-2xl font-bold">{stats.totalWorkers}</p>
+          {currentUser?.role === 'editor' && <p className="text-xs text-gray-400">Theo tổ được gán</p>}
+        </div>
+        <div className="bg-white rounded-xl shadow-sm p-4">
+          <div className="flex items-center gap-2 text-red-500 mb-1"><AlertTriangle size={18} /><span className="text-xs font-medium">Vi phạm AT</span></div>
+          <p className="text-2xl font-bold">{stats.totalSafetyViolations}</p>
+        </div>
+        <div className="bg-white rounded-xl shadow-sm p-4">
+          <div className="flex items-center gap-2 text-orange-500 mb-1"><TrendingUp size={18} /><span className="text-xs font-medium">Lỗi CL</span></div>
+          <p className="text-2xl font-bold">{stats.totalQualityIssues}</p>
+        </div>
+        <div className="bg-white rounded-xl shadow-sm p-4">
+          <div className="flex items-center gap-2 text-blue-600 mb-1"><ClipboardList size={18} /><span className="text-xs font-medium">Nhập KPI</span></div>
+          <p className="text-2xl font-bold">{stats.dataEntryProgress.percent}%</p>
+          <p className="text-xs text-gray-500">{stats.dataEntryProgress.entered}/{stats.dataEntryProgress.total} người</p>
+        </div>
       </div>
 
-      <div className="grid lg:grid-cols-2 gap-6">
-        <div className="bg-white rounded-xl shadow-sm p-5">
-          <h3 className="font-bold text-gray-800 mb-4 flex items-center gap-2">
-            <Trophy className="text-yellow-500" size={20} /> Xếp hạng thi đua - Tuần {selectedWeek}
+      {stats.alerts.length > 0 && (
+        <div className="bg-amber-50 border border-amber-200 rounded-xl p-4">
+          <h3 className="font-bold text-amber-900 flex items-center gap-2 mb-2">
+            <Bell size={18} /> Thiếu nhật ký KPI — tuần {selectedWeek}
+            <span className="text-sm font-normal text-amber-700">({stats.alerts.length} người)</span>
           </h3>
-          <div className="space-y-3">
-            {stats.teamRankings.map((team, idx) => (
-              <div key={team.teamId} className={`flex items-center gap-3 p-3 rounded-lg ${
-                idx === 0 ? 'bg-yellow-50 border border-yellow-200' :
-                idx === 1 ? 'bg-gray-50 border border-gray-200' :
-                idx === 2 ? 'bg-orange-50 border border-orange-200' : 'bg-white border border-gray-100'
-              }`}>
-                <div className={`w-8 h-8 rounded-full flex items-center justify-center font-bold text-sm ${
-                  idx === 0 ? 'bg-yellow-400 text-white' : idx === 1 ? 'bg-gray-400 text-white' :
-                  idx === 2 ? 'bg-orange-400 text-white' : 'bg-gray-200 text-gray-600'
-                }`}>{team.rank}</div>
-                <div className="flex-1">
-                  <p className="font-semibold text-gray-800">{team.teamName}</p>
-                  <p className="text-xs text-gray-500">CN: {team.personalPoints} · Thưởng: {team.teamBonus} · Lỗi: {team.violationCount}</p>
-                </div>
-                <div className="text-right">
-                  <p className="text-lg font-bold text-primary">{team.totalPoints}</p>
-                  <p className="text-xs text-gray-400">điểm</p>
-                </div>
-              </div>
+          <ul className="text-sm text-amber-900 space-y-1 max-h-40 overflow-y-auto">
+            {stats.alerts.map(a => (
+              <li key={a.id} className="flex items-start gap-2">
+                <span className="text-amber-500">•</span>
+                <span>{a.message}</span>
+              </li>
             ))}
-            {stats.teamRankings.length === 0 && <p className="text-center text-gray-400 py-8">Chưa có dữ liệu thi đua</p>}
-          </div>
+          </ul>
         </div>
-        <div className="bg-white rounded-xl shadow-sm p-5">
-          <h3 className="font-bold text-gray-800 mb-4">Biểu đồ điểm thi đua</h3>
-          {chartData.length > 0 ? (
-            <ResponsiveContainer width="100%" height={280}>
-              <BarChart data={chartData}>
-                <CartesianGrid strokeDasharray="3 3" />
-                <XAxis dataKey="name" tick={{ fontSize: 12 }} />
-                <YAxis tick={{ fontSize: 12 }} />
-                <Tooltip /><Legend />
-                <Bar dataKey="Điểm cá nhân" fill="#0f4c81" radius={[4, 4, 0, 0]} />
-                <Bar dataKey="Điểm thưởng" fill="#f5a623" radius={[4, 4, 0, 0]} />
-              </BarChart>
-            </ResponsiveContainer>
-          ) : <div className="h-64 flex items-center justify-center text-gray-400">Chưa có dữ liệu</div>}
-        </div>
-      </div>
+      )}
 
-      <div className="bg-white rounded-xl shadow-sm p-5">
-        <h3 className="font-bold text-gray-800 mb-3">Thông tin công trường</h3>
-        <div className="grid sm:grid-cols-2 lg:grid-cols-4 gap-4 text-sm">
-          <div><p className="text-gray-500">Công trình</p><p className="font-medium">{project.name}</p></div>
-          <div><p className="text-gray-500">Gói thầu</p><p className="font-medium">{project.packageName}</p></div>
-          <div><p className="text-gray-500">Chỉ huy trưởng</p><p className="font-medium">{project.commanderName}</p></div>
-          <div><p className="text-gray-500">Giai đoạn</p><p className="font-medium">{project.phase}</p></div>
+      <div className="bg-white rounded-xl shadow-sm overflow-hidden">
+        <div className="px-4 py-3 border-b flex items-center justify-between">
+          <h3 className="font-bold text-gray-800">Bảng xếp hạng tổ đội — tuần {selectedWeek}</h3>
+          <span className="text-xs text-gray-500">{teams.length} tổ</span>
         </div>
-      </div>
-    </div>
-  );
-}
-
-function StatCard({ icon: Icon, label, value, sub, color }: { icon: any; label: string; value: string | number; sub?: string; color: string }) {
-  return (
-    <div className="bg-white rounded-xl shadow-sm p-4 flex items-start gap-3">
-      <div className={`${color} p-2.5 rounded-lg text-white`}><Icon size={20} /></div>
-      <div>
-        <p className="text-xs text-gray-500 font-medium">{label}</p>
-        <p className="text-xl font-bold text-gray-800">{value}</p>
-        {sub && <p className="text-xs text-gray-400">{sub}</p>}
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm">
+            <thead className="sticky-header">
+              <tr>
+                <th className="px-4 py-3 text-left">Hạng</th>
+                <th className="px-4 py-3 text-left">Tổ đội</th>
+                <th className="px-4 py-3 text-center">Điểm CN</th>
+                <th className="px-4 py-3 text-center">Thưởng tổ</th>
+                <th className="px-4 py-3 text-center">Tổng</th>
+                <th className="px-4 py-3 text-center">Vi phạm</th>
+              </tr>
+            </thead>
+            <tbody>
+              {stats.teamRankings.map(r => (
+                <tr key={r.teamId} className="border-t hover:bg-gray-50">
+                  <td className="px-4 py-3 font-bold">{r.rank}</td>
+                  <td className="px-4 py-3 font-medium">{r.teamName}</td>
+                  <td className="px-4 py-3 text-center">{r.personalPoints}</td>
+                  <td className="px-4 py-3 text-center text-green-600">{r.teamBonus}</td>
+                  <td className="px-4 py-3 text-center font-bold text-primary">{r.totalPoints}</td>
+                  <td className="px-4 py-3 text-center text-red-600">{r.violationCount}</td>
+                </tr>
+              ))}
+              {!stats.teamRankings.length && (
+                <tr><td colSpan={6} className="px-4 py-8 text-center text-gray-400">Chưa có dữ liệu</td></tr>
+              )}
+            </tbody>
+          </table>
+        </div>
       </div>
     </div>
   );

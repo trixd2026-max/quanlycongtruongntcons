@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { BrowserRouter, Routes, Route } from 'react-router-dom';
-import { AppProvider } from './contexts/AppContext';
+import { AppProvider, useApp } from './contexts/AppContext';
 import { Header } from './components/layout/Header';
 import { Sidebar } from './components/layout/Sidebar';
 import { DashboardPage } from './pages/DashboardPage';
@@ -11,9 +11,14 @@ import { ProgressPage } from './pages/ProgressPage';
 import { SchedulePage } from './pages/SchedulePage';
 import { WorkersPage } from './pages/WorkersPage';
 import { SettingsPage } from './pages/SettingsPage';
+import { LoginPage } from './pages/LoginPage';
 
 function AppLayout() {
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  const { currentUser } = useApp();
+
+  if (!currentUser) return <LoginPage />;
+
   return (
     <div className="min-h-screen flex flex-col bg-gray-100">
       <Header onMenuClick={() => setSidebarOpen(true)} />

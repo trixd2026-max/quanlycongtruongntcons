@@ -107,7 +107,6 @@ export function AppProvider({ children }: { children: ReactNode }) {
       const authSaved = localStorage.getItem(AUTH_KEY);
       if (authSaved) currentUser = JSON.parse(authSaved);
     } catch { /* ignore */ }
-
     const saved = localStorage.getItem(STORAGE_KEY);
     if (saved) {
       try {
@@ -117,6 +116,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
           shiftAssignments: parsed.shiftAssignments || [],
           progressItems: parsed.progressItems || [],
           auditLogs: parsed.auditLogs || [],
+          teams: parsed.teams || [],
+          workers: parsed.workers || [],
           currentUser: currentUser ?? parsed.currentUser ?? null,
           connectionStatus: 'not_configured' as ConnectionStatus,
           isDemoMode: true,
@@ -132,20 +133,18 @@ export function AppProvider({ children }: { children: ReactNode }) {
   });
 
   useEffect(() => {
-    if (state.isDemoMode && state.project) {
+    if (state.project) {
       const toSave = {
         project: state.project, teams: state.teams, workers: state.workers,
         scoreRules: state.scoreRules, transactions: state.transactions, teamBonuses: state.teamBonuses,
         locks: state.locks, shiftAssignments: state.shiftAssignments,
         progressItems: state.progressItems || [], auditLogs: state.auditLogs || [],
         selectedWeek: state.selectedWeek, selectedMonth: state.selectedMonth,
-        gradeThresholds: state.gradeThresholds, isDemoMode: true,
+        gradeThresholds: state.gradeThresholds, isDemoMode: state.isDemoMode,
       };
       localStorage.setItem(STORAGE_KEY, JSON.stringify(toSave));
     }
-    if (state.currentUser) {
-      localStorage.setItem(AUTH_KEY, JSON.stringify(state.currentUser));
-    }
+    if (state.currentUser) localStorage.setItem(AUTH_KEY, JSON.stringify(state.currentUser));
   }, [state]);
 
   const seedDemoData = useCallback(() => {
@@ -156,7 +155,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     const admin = createMockAdmin(project.id);
     setState(prev => ({
       ...prev, project, teams, workers, scoreRules, transactions: [], teamBonuses: [],
-      locks: [], shiftAssignments: [], progressItems: [], auditLogs: [],
+      locks: [], shiftAssignments: [], progressItems: prev.progressItems || [], auditLogs: prev.auditLogs || [],
       currentUser: prev.currentUser ?? admin,
       connectionStatus: isFirebaseConfigured() ? 'synced' : 'not_configured',
       isDemoMode: !isFirebaseConfigured(),
@@ -190,29 +189,41 @@ export function AppProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     if (!isFirebaseConfigured() || !state.project?.id) return;
     const projectId = state.project.id;
-    setState(s => ({ ...s, connectionStatus: 'connecting', isDemoMode: false }));
     const unsubs = subscribeProjectData(projectId, {
       onProject: (proj) => { if (proj) setState(s => ({ ...s, project: proj, connectionStatus: 'synced' })); },
-      onTeams: (teams) => setState(s => ({ ...s, teams, connectionStatus: 'synced' })),
-      onWorkers: (workers) => setState(s => ({ ...s, workers, connectionStatus: 'synced' })),
-      onRules: (scoreRules) => setState(s => ({ ...s, scoreRules, connectionStatus: 'synced' })),
-      onTransactions: (transactions) => setState(s => ({ ...s, transactions, connectionStatus: 'synced' })),
-      onLocks: (locks) => setState(s => ({ ...s, locks, connectionStatus: 'synced' })),
-      onShifts: (shiftAssignments) => setState(s => ({ ...s, shiftAssignments, connectionStatus: 'synced' })),
-      onProgress: (progressItems) => setState(s => ({ ...s, progressItems: progressItems || [], connectionStatus: 'synced' })),
-      onBonuses: (teamBonuses) => setState(s => ({ ...s, teamBonuses, connectionStatus: 'synced' })),
+      onTeams: (teams) => setState(s => {
+        if ((!teams || teams.length === 0) && (s.teams?.length || 0) > 0) {
+          void seedProjectToFirestore({ project: s.project!, teams: s.teams, workers: s.workers, scoreRules: s.scoreRules });
+          return { ...s, connectionStatus: 'synced' };
+        }
+        if (teams && teams.length > 0) return { ...s, teams, connectionStatus: 'synced' };
+        return { ...s, connectionStatus: 'synced' };
+      }),
+      onWorkers: (workers) => setState(s => {
+        if ((!workers || workers.length === 0) && (s.workers?.length || 0) > 0) return { ...s, connectionStatus: 'synced' };
+        if (workers && workers.length > 0) return { ...s, workers, connectionStatus: 'synced' };
+        return { ...s, connectionStatus: 'synced' };
+      }),
+      onRules: (scoreRules) => setState(s => {
+        if ((!scoreRules || scoreRules.length === 0) && (s.scoreRules?.length || 0) > 0) return { ...s, connectionStatus: 'synced' };
+        if (scoreRules && scoreRules.length > 0) return { ...s, scoreRules, connectionStatus: 'synced' };
+        return { ...s, connectionStatus: 'synced' };
+      }),
+      onTransactions: (transactions) => setState(s => ({ ...s, transactions: transactions || s.transactions, connectionStatus: 'synced' })),
+      onLocks: (locks) => setState(s => ({ ...s, locks: locks || s.locks, connectionStatus: 'synced' })),
+      onShifts: (shiftAssignments) => setState(s => ({ ...s, shiftAssignments: shiftAssignments || s.shiftAssignments, connectionStatus: 'synced' })),
+      onProgress: (progressItems) => setState(s => ({ ...s, progressItems: (progressItems && progressItems.length) ? progressItems : (s.progressItems || []), connectionStatus: 'synced' })),
+      onBonuses: (teamBonuses) => setState(s => ({ ...s, teamBonuses: teamBonuses || s.teamBonuses, connectionStatus: 'synced' })),
       onAudit: (auditLogs) => {
         const sorted = [...(auditLogs || [])].sort((a, b) => (b.createdAt || '').localeCompare(a.createdAt || ''));
-        setState(s => ({ ...s, auditLogs: sorted.slice(0, 200), connectionStatus: 'synced' }));
+        setState(s => ({ ...s, auditLogs: sorted.length ? sorted.slice(0, 200) : (s.auditLogs || []), connectionStatus: 'synced' }));
       },
       onError: () => setState(s => ({ ...s, connectionStatus: 'error' })),
     });
     return () => unsubs.forEach(u => u());
   }, [state.project?.id]);
 
-  useEffect(() => {
-    if (!state.project) seedDemoData();
-  }, []);
+  useEffect(() => { if (!state.project) seedDemoData(); }, []);
 
   const getWeekRange = useCallback((weekNumber: number): WeekRange => {
     if (!state.project) return { weekNumber, startDate: '', endDate: '', days: [] };
@@ -222,10 +233,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
       const d = addDays(weekStart, i);
       return { date: format(d, 'yyyy-MM-dd'), dayOfWeek: i, label: format(d, 'EEEE dd/MM', { locale: vi }) };
     });
-    return {
-      weekNumber, startDate: format(weekStart, 'yyyy-MM-dd'),
-      endDate: format(addDays(weekStart, 6), 'yyyy-MM-dd'), days,
-    };
+    return { weekNumber, startDate: format(weekStart, 'yyyy-MM-dd'), endDate: format(addDays(weekStart, 6), 'yyyy-MM-dd'), days };
   }, [state.project]);
 
   const getWorkerWeekPoints = useCallback((workerId: string, week: number) => {
@@ -270,41 +278,26 @@ export function AppProvider({ children }: { children: ReactNode }) {
     const teamRankings = getVisibleTeams().map(team => {
       const pts = getTeamWeekPoints(team.id, week);
       const violations = state.transactions.filter(t => t.teamId === team.id && t.weekNumber === week && !t.isUndone && t.points < 0).length;
-      return {
-        teamId: team.id, teamName: team.name, personalPoints: pts.personal, teamBonus: pts.bonus,
-        totalPoints: pts.total, rank: 0, violationCount: violations, attendanceScore: 0,
-      };
-    }).sort((a, b) => b.totalPoints - a.totalPoints || a.violationCount - b.violationCount)
-      .map((t, i) => ({ ...t, rank: i + 1 }));
+      return { teamId: team.id, teamName: team.name, personalPoints: pts.personal, teamBonus: pts.bonus, totalPoints: pts.total, rank: 0, violationCount: violations, attendanceScore: 0 };
+    }).sort((a, b) => b.totalPoints - a.totalPoints || a.violationCount - b.violationCount).map((t, i) => ({ ...t, rank: i + 1 }));
     const enteredIds = new Set(state.transactions.filter(t => t.weekNumber === week && !t.isUndone).map(t => t.workerId));
     const missing = visibleWorkers.filter(w => !enteredIds.has(w.id));
     const alerts = missing.slice(0, 20).map(w => ({
-      id: `missing-${w.id}-w${week}`,
-      type: 'missing_data' as const,
-      severity: 'medium' as const,
-      message: `${w.fullName} (${w.code}) chua co nhat ky KPI tuan ${week}`,
-      workerId: w.id,
-      teamId: w.teamId,
+      id: `missing-${w.id}-w${week}`, type: 'missing_data' as const, severity: 'medium' as const,
+      message: `${w.fullName} (${w.code}) chua co nhat ky KPI tuan ${week}`, workerId: w.id, teamId: w.teamId,
     }));
     return {
-      totalWorkers: visibleWorkers.length,
-      totalSafetyViolations: safetyViolations,
+      totalWorkers: visibleWorkers.length, totalSafetyViolations: safetyViolations,
       totalQualityIssues: state.transactions.filter(t => t.category === 'progress' && t.weekNumber === week && !t.isUndone).length,
       teamRankings,
       totalPersonalPoints: teamRankings.reduce((s, t) => s + t.personalPoints, 0),
       totalTeamBonus: teamRankings.reduce((s, t) => s + t.teamBonus, 0),
-      dataEntryProgress: {
-        entered: enteredIds.size,
-        total: visibleWorkers.length,
-        percent: visibleWorkers.length ? Math.round((enteredIds.size / visibleWorkers.length) * 100) : 0,
-      },
+      dataEntryProgress: { entered: enteredIds.size, total: visibleWorkers.length, percent: visibleWorkers.length ? Math.round((enteredIds.size / visibleWorkers.length) * 100) : 0 },
       alerts,
     };
   }, [state, getTeamWeekPoints, getVisibleWorkers, getVisibleTeams]);
 
-  const isWeekLocked = useCallback((week: number) => {
-    return state.locks.some(l => l.weekNumber === week && !l.date && l.isLocked);
-  }, [state.locks]);
+  const isWeekLocked = useCallback((week: number) => state.locks.some(l => l.weekNumber === week && !l.date && l.isLocked), [state.locks]);
 
   const value: AppContextType = {
     ...state,
@@ -314,21 +307,28 @@ export function AppProvider({ children }: { children: ReactNode }) {
     firebaseEnabled: isFirebaseConfigured(),
     setSelectedWeek: (w) => setState(s => ({ ...s, selectedWeek: w })),
     setSelectedMonth: (m) => setState(s => ({ ...s, selectedMonth: m })),
-    addWorker: (w) => setState(s => ({
-      ...s, workers: [...s.workers, { ...w, id: uuidv4(), createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() }],
-    })),
-    updateWorker: (id, data) => setState(s => ({
-      ...s, workers: s.workers.map(w => w.id === id ? { ...w, ...data, updatedAt: new Date().toISOString() } : w),
-    })),
-    deleteWorker: (id) => setState(s => ({
-      ...s, workers: s.workers.map(w => w.id === id ? { ...w, isActive: false } : w),
-    })),
-    addTeam: (name) => setState(s => ({
-      ...s, teams: [...s.teams, {
-        id: uuidv4(), projectId: s.project!.id, name, isActive: true,
-        createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(),
-      }],
-    })),
+    addWorker: (w) => setState(s => {
+      const row = { ...w, id: uuidv4(), createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() };
+      if (s.project) void fsSet(s.project.id, 'workers', row.id, row as unknown as Record<string, unknown>);
+      return { ...s, workers: [...s.workers, row] };
+    }),
+    updateWorker: (id, data) => setState(s => {
+      const workers = s.workers.map(w => w.id === id ? { ...w, ...data, updatedAt: new Date().toISOString() } : w);
+      const row = workers.find(w => w.id === id);
+      if (row && s.project) void fsSet(s.project.id, 'workers', id, row as unknown as Record<string, unknown>);
+      return { ...s, workers };
+    }),
+    deleteWorker: (id) => setState(s => {
+      const workers = s.workers.map(w => w.id === id ? { ...w, isActive: false } : w);
+      const row = workers.find(w => w.id === id);
+      if (row && s.project) void fsSet(s.project.id, 'workers', id, row as unknown as Record<string, unknown>);
+      return { ...s, workers };
+    }),
+    addTeam: (name) => setState(s => {
+      const row = { id: uuidv4(), projectId: s.project!.id, name, isActive: true, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() };
+      void fsSet(s.project!.id, 'teams', row.id, row as unknown as Record<string, unknown>);
+      return { ...s, teams: [...s.teams, row] };
+    }),
     updateTeam: (id, data) => setState(s => ({
       ...s, teams: s.teams.map(t => t.id === id ? { ...t, ...data, updatedAt: new Date().toISOString() } : t),
     })),
@@ -337,78 +337,27 @@ export function AppProvider({ children }: { children: ReactNode }) {
       const id = uuidv4();
       const row = { ...tx, id, createdAt: new Date().toISOString() };
       setState(s => {
-        const log: AuditLog = {
-          id: uuidv4(), projectId: s.project?.id || '', action: 'ADD_SCORE',
-          detail: `${row.ruleName} ${row.points > 0 ? '+' : ''}${row.points}`,
-          entityType: 'transaction', entityId: id,
-          userId: s.currentUser?.id || '', userName: s.currentUser?.displayName || '',
-          createdAt: new Date().toISOString(),
-        };
-        if (s.project) {
-          void fsSet(s.project.id, 'transactions', id, row as unknown as Record<string, unknown>);
-          void fsAddAudit(s.project.id, log);
-        }
-        return { ...s, transactions: [...s.transactions, row], auditLogs: [log, ...(s.auditLogs || [])].slice(0, 200) };
+        if (s.project) void fsSet(s.project.id, 'transactions', id, row as unknown as Record<string, unknown>);
+        return { ...s, transactions: [...s.transactions, row] };
       });
     },
-    undoTransaction: (id) => setState(s => {
-      const tx = s.transactions.find(t => t.id === id);
-      const transactions = s.transactions.map(t => t.id === id ? { ...t, isUndone: true } : t);
-      const log: AuditLog = {
-        id: uuidv4(), projectId: s.project?.id || '', action: 'UNDO_SCORE',
-        detail: tx ? `Huy diem ${tx.ruleName}` : `Huy ${id}`,
-        entityType: 'transaction', entityId: id,
-        userId: s.currentUser?.id || '', userName: s.currentUser?.displayName || '',
-        createdAt: new Date().toISOString(),
-      };
-      if (s.project && tx) {
-        void fsSet(s.project.id, 'transactions', id, { ...tx, isUndone: true } as unknown as Record<string, unknown>);
-        void fsAddAudit(s.project.id, log);
-      }
-      return { ...s, transactions, auditLogs: [log, ...(s.auditLogs || [])].slice(0, 200) };
-    }),
+    undoTransaction: (id) => setState(s => ({
+      ...s, transactions: s.transactions.map(t => t.id === id ? { ...t, isUndone: true } : t),
+    })),
     lockWeek: (week) => setState(s => {
-      const lock = {
-        id: `${s.project!.id}_w${week}`, projectId: s.project!.id, weekNumber: week,
-        isLocked: true, lockedAt: new Date().toISOString(), lockedBy: s.currentUser?.id,
-      };
-      const log: AuditLog = {
-        id: uuidv4(), projectId: s.project!.id, action: 'LOCK_WEEK', detail: `Khoa tuan ${week}`,
-        entityType: 'lock', entityId: lock.id,
-        userId: s.currentUser?.id || '', userName: s.currentUser?.displayName || '',
-        createdAt: new Date().toISOString(),
-      };
+      const lock = { id: `${s.project!.id}_w${week}`, projectId: s.project!.id, weekNumber: week, isLocked: true, lockedAt: new Date().toISOString(), lockedBy: s.currentUser?.id };
       void fsSet(s.project!.id, 'locks', lock.id, lock as unknown as Record<string, unknown>);
-      void fsAddAudit(s.project!.id, log);
-      return { ...s, locks: [...s.locks.filter(l => !(l.weekNumber === week && !l.date)), lock], auditLogs: [log, ...(s.auditLogs || [])].slice(0, 200) };
+      return { ...s, locks: [...s.locks.filter(l => !(l.weekNumber === week && !l.date)), lock] };
     }),
-    unlockWeek: (week) => setState(s => {
-      const locks = s.locks.map(l => l.weekNumber === week && !l.date
-        ? { ...l, isLocked: false, unlockedAt: new Date().toISOString(), unlockedBy: s.currentUser?.id } : l);
-      const lock = locks.find(l => l.weekNumber === week && !l.date);
-      const log: AuditLog = {
-        id: uuidv4(), projectId: s.project!.id, action: 'UNLOCK_WEEK', detail: `Mo khoa tuan ${week}`,
-        entityType: 'lock', entityId: lock?.id,
-        userId: s.currentUser?.id || '', userName: s.currentUser?.displayName || '',
-        createdAt: new Date().toISOString(),
-      };
-      if (lock) void fsSet(s.project!.id, 'locks', lock.id, lock as unknown as Record<string, unknown>);
-      void fsAddAudit(s.project!.id, log);
-      return { ...s, locks, auditLogs: [log, ...(s.auditLogs || [])].slice(0, 200) };
-    }),
+    unlockWeek: (week) => setState(s => ({
+      ...s, locks: s.locks.map(l => l.weekNumber === week && !l.date ? { ...l, isLocked: false, unlockedAt: new Date().toISOString(), unlockedBy: s.currentUser?.id } : l),
+    })),
     isWeekLocked,
     updateProject: (data) => setState(s => {
       if (!s.project) return s;
       const project = { ...s.project, ...data, updatedAt: new Date().toISOString() };
       void fsSaveProject(project);
-      const log: AuditLog = {
-        id: uuidv4(), projectId: project.id, action: 'UPDATE_PROJECT', detail: 'Cap nhat cai dat',
-        entityType: 'project', entityId: project.id,
-        userId: s.currentUser?.id || '', userName: s.currentUser?.displayName || '',
-        createdAt: new Date().toISOString(),
-      };
-      void fsAddAudit(project.id, log);
-      return { ...s, project, auditLogs: [log, ...(s.auditLogs || [])].slice(0, 200) };
+      return { ...s, project };
     }),
     updateScoreRule: (id, data) => setState(s => ({
       ...s, scoreRules: s.scoreRules.map(r => r.id === id ? { ...r, ...data, updatedAt: new Date().toISOString() } : r),
@@ -420,26 +369,22 @@ export function AppProvider({ children }: { children: ReactNode }) {
       ...s, teamBonuses: [...s.teamBonuses, { ...bonus, id: uuidv4(), createdAt: new Date().toISOString() }],
     })),
     assignShift: (a) => setState(s => {
-      const filtered = s.shiftAssignments.filter(
-        x => !(x.date === a.date && x.shiftKey === a.shiftKey && x.workerId === a.workerId)
-      );
-      return { ...s, shiftAssignments: [...filtered, { ...a, id: uuidv4(), createdAt: new Date().toISOString() }] };
+      const row = { ...a, id: uuidv4(), createdAt: new Date().toISOString() };
+      const filtered = s.shiftAssignments.filter(x => !(x.date === a.date && x.shiftKey === a.shiftKey && x.workerId === a.workerId));
+      if (s.project) void fsSet(s.project.id, 'shifts', row.id, row as unknown as Record<string, unknown>);
+      return { ...s, shiftAssignments: [...filtered, row] };
     }),
-    removeShiftAssignment: (id) => setState(s => ({
-      ...s, shiftAssignments: s.shiftAssignments.filter(x => x.id !== id),
-    })),
+    removeShiftAssignment: (id) => setState(s => {
+      if (s.project) void fsDelete(s.project.id, 'shifts', id);
+      return { ...s, shiftAssignments: s.shiftAssignments.filter(x => x.id !== id) };
+    }),
     addProgressItem: (item) => setState(s => {
-      const row: ProgressItem = {
-        ...item, id: uuidv4(),
-        createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(),
-      };
+      const row: ProgressItem = { ...item, id: uuidv4(), createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() };
       if (s.project) void fsSet(s.project.id, 'progress', row.id, row as unknown as Record<string, unknown>);
       return { ...s, progressItems: [...(s.progressItems || []), row] };
     }),
     updateProgressItem: (id, data) => setState(s => {
-      const progressItems = (s.progressItems || []).map(p =>
-        p.id === id ? { ...p, ...data, updatedAt: new Date().toISOString() } : p
-      );
+      const progressItems = (s.progressItems || []).map(p => p.id === id ? { ...p, ...data, updatedAt: new Date().toISOString() } : p);
       const row = progressItems.find(p => p.id === id);
       if (row && s.project) void fsSet(s.project.id, 'progress', id, row as unknown as Record<string, unknown>);
       return { ...s, progressItems };
@@ -449,71 +394,40 @@ export function AppProvider({ children }: { children: ReactNode }) {
       return { ...s, progressItems: (s.progressItems || []).filter(p => p.id !== id) };
     }),
     pushAudit: (action, detail, entityType, entityId) => setState(s => {
-      const log: AuditLog = {
-        id: uuidv4(), projectId: s.project?.id || '', action, detail,
-        entityType, entityId,
-        userId: s.currentUser?.id || '', userName: s.currentUser?.displayName || '',
-        createdAt: new Date().toISOString(),
-      };
+      const log: AuditLog = { id: uuidv4(), projectId: s.project?.id || '', action, detail, entityType, entityId, userId: s.currentUser?.id || '', userName: s.currentUser?.displayName || '', createdAt: new Date().toISOString() };
       if (s.project) void fsAddAudit(s.project.id, log);
       return { ...s, auditLogs: [log, ...(s.auditLogs || [])].slice(0, 200) };
     }),
     syncToCloud: async () => {
       if (!state.project || !isFirebaseConfigured()) return;
-      await seedProjectToFirestore({
-        project: state.project,
-        teams: state.teams,
-        workers: state.workers,
-        scoreRules: state.scoreRules,
-      });
-      for (const t of state.transactions) {
-        await fsSet(state.project.id, 'transactions', t.id, t as unknown as Record<string, unknown>);
-      }
-      for (const p of (state.progressItems || [])) {
-        await fsSet(state.project.id, 'progress', p.id, p as unknown as Record<string, unknown>);
-      }
+      await seedProjectToFirestore({ project: state.project, teams: state.teams, workers: state.workers, scoreRules: state.scoreRules });
       setState(s => ({ ...s, connectionStatus: 'synced', isDemoMode: false }));
     },
-    getWeekRange, getWorkerWeekPoints, getTeamWeekPoints, getDashboardStats,
-    getVisibleWorkers, getVisibleTeams,
+    getWeekRange, getWorkerWeekPoints, getTeamWeekPoints, getDashboardStats, getVisibleWorkers, getVisibleTeams,
     clearDemoData, seedDemoData,
     loginAs: (role) => {
       if (!state.project) return;
       const acc = DEMO_ACCOUNTS.find(a => a.role === role) || DEMO_ACCOUNTS[0];
       const teamIds = role === 'editor' ? state.teams.slice(0, 1).map(t => t.id) : acc.teamIds;
-      setState(s => ({
-        ...s,
-        currentUser: { ...userFromAccount({ ...acc, teamIds }, state.project!.id), teamIds },
-      }));
+      setState(s => ({ ...s, currentUser: { ...userFromAccount({ ...acc, teamIds }, state.project!.id), teamIds } }));
     },
     loginWithPassword: async (email, password) => {
       if (isFirebaseConfigured()) {
         const res = await firebaseLogin(email, password);
-        if (res.ok && res.user) {
-          setState(s => ({ ...s, currentUser: res.user!, connectionStatus: 'synced', isDemoMode: false }));
-        }
+        if (res.ok && res.user) setState(s => ({ ...s, currentUser: res.user!, connectionStatus: 'synced', isDemoMode: false }));
         return { ok: res.ok, message: res.message };
       }
-      const acc = DEMO_ACCOUNTS.find(
-        a => a.email.toLowerCase() === email.trim().toLowerCase() && a.password === password
-      );
-      if (!acc) return { ok: false, message: 'Email hoac mat khau khong dung (Demo)' };
-      if (!state.project) return { ok: false, message: 'Chua co du lieu du an' };
+      const acc = DEMO_ACCOUNTS.find(a => a.email.toLowerCase() === email.trim().toLowerCase() && a.password === password);
+      if (!acc) return { ok: false, message: 'Email/mat khau sai' };
+      if (!state.project) return { ok: false, message: 'Chua co du an' };
       const teamIds = acc.role === 'editor' ? state.teams.slice(0, 1).map(t => t.id) : acc.teamIds;
-      setState(s => ({
-        ...s,
-        currentUser: { ...userFromAccount({ ...acc, teamIds }, state.project!.id), teamIds },
-      }));
-      return { ok: true, message: 'Dang nhap Demo thanh cong' };
+      setState(s => ({ ...s, currentUser: { ...userFromAccount({ ...acc, teamIds }, state.project!.id), teamIds } }));
+      return { ok: true, message: 'OK' };
     },
     registerWithPassword: async (email, password, displayName, role = 'viewer') => {
-      if (!isFirebaseConfigured()) {
-        return { ok: false, message: 'Chi dang ky khi da cau hinh Firebase' };
-      }
+      if (!isFirebaseConfigured()) return { ok: false, message: 'Can Firebase' };
       const res = await firebaseRegister(email, password, displayName, role);
-      if (res.ok && res.user) {
-        setState(s => ({ ...s, currentUser: res.user!, connectionStatus: 'synced', isDemoMode: false }));
-      }
+      if (res.ok && res.user) setState(s => ({ ...s, currentUser: res.user!, connectionStatus: 'synced', isDemoMode: false }));
       return { ok: res.ok, message: res.message };
     },
     logout: () => {

@@ -55,20 +55,32 @@ interface AppContextType extends AppState {
 }
 
 const AppContext = createContext<AppContextType | null>(null);
-const STORAGE_KEY = 'qlct_demo_data_v1';
+const STORAGE_KEY = 'qlct_demo_data_v2';
+const AUTH_KEY = 'qlct_auth_session_v1';
 
 export function AppProvider({ children }: { children: ReactNode }) {
   const [state, setState] = useState<AppState>(() => {
+    let currentUser: AppUser | null = null;
+    try {
+      const authSaved = localStorage.getItem(AUTH_KEY);
+      if (authSaved) currentUser = JSON.parse(authSaved);
+    } catch {}
+
     const saved = localStorage.getItem(STORAGE_KEY);
     if (saved) {
       try {
         const parsed = JSON.parse(saved);
-        return { ...parsed, connectionStatus: 'not_configured' as ConnectionStatus, isDemoMode: true };
+        return {
+          ...parsed,
+          currentUser: currentUser ?? parsed.currentUser ?? null,
+          connectionStatus: 'not_configured' as ConnectionStatus,
+          isDemoMode: true,
+        };
       } catch {}
     }
     return {
       project: null, teams: [], workers: [], scoreRules: [], transactions: [],
-      teamBonuses: [], locks: [], currentUser: null, connectionStatus: 'not_configured' as ConnectionStatus,
+      teamBonuses: [], locks: [], currentUser, connectionStatus: 'not_configured' as ConnectionStatus,
       selectedWeek: 1, selectedMonth: 1, gradeThresholds: DEFAULT_GRADE_THRESHOLDS, isDemoMode: true,
     };
   });
@@ -78,10 +90,13 @@ export function AppProvider({ children }: { children: ReactNode }) {
       const toSave = {
         project: state.project, teams: state.teams, workers: state.workers,
         scoreRules: state.scoreRules, transactions: state.transactions, teamBonuses: state.teamBonuses,
-        locks: state.locks, currentUser: state.currentUser, selectedWeek: state.selectedWeek,
+        locks: state.locks, selectedWeek: state.selectedWeek,
         selectedMonth: state.selectedMonth, gradeThresholds: state.gradeThresholds, isDemoMode: true,
       };
       localStorage.setItem(STORAGE_KEY, JSON.stringify(toSave));
+    }
+    if (state.currentUser) {
+      localStorage.setItem(AUTH_KEY, JSON.stringify(state.currentUser));
     }
   }, [state]);
 
@@ -93,17 +108,19 @@ export function AppProvider({ children }: { children: ReactNode }) {
     const admin = createMockAdmin(project.id);
     setState(prev => ({
       ...prev, project, teams, workers, scoreRules, transactions: [], teamBonuses: [],
-      locks: [], currentUser: admin, connectionStatus: 'not_configured', isDemoMode: true, selectedWeek: 1,
+      locks: [],
+      currentUser: prev.currentUser ?? admin,
+      connectionStatus: 'not_configured', isDemoMode: true, selectedWeek: 1,
     }));
   }, []);
 
   const clearDemoData = useCallback(() => {
     localStorage.removeItem(STORAGE_KEY);
-    setState({
+    setState(s => ({
       project: null, teams: [], workers: [], scoreRules: [], transactions: [], teamBonuses: [],
-      locks: [], currentUser: null, connectionStatus: 'not_configured', selectedWeek: 1,
+      locks: [], currentUser: s.currentUser, connectionStatus: 'not_configured', selectedWeek: 1,
       selectedMonth: 1, gradeThresholds: DEFAULT_GRADE_THRESHOLDS, isDemoMode: true,
-    });
+    }));
   }, []);
 
   useEffect(() => {
@@ -248,7 +265,10 @@ export function AppProvider({ children }: { children: ReactNode }) {
       };
       setState(s => ({ ...s, currentUser: users[role] }));
     },
-    logout: () => setState(s => ({ ...s, currentUser: null })),
+    logout: () => {
+      localStorage.removeItem(AUTH_KEY);
+      setState(s => ({ ...s, currentUser: null }));
+    },
   };
 
   return <AppContext.Provider value={value}>{children}</AppContext.Provider>;

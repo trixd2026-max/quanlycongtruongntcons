@@ -1,10 +1,10 @@
 import { useApp } from '../../contexts/AppContext';
-import { AlertCircle, CheckCircle, Cloud, Menu } from 'lucide-react';
+import { AlertCircle, CheckCircle, Cloud, Menu, LogOut } from 'lucide-react';
 
 interface HeaderProps { onMenuClick: () => void; }
 
 export function Header({ onMenuClick }: HeaderProps) {
-  const { project, connectionStatus, currentUser } = useApp();
+  const { project, connectionStatus, currentUser, logout } = useApp();
   const statusConfig = {
     connecting: { icon: Cloud, text: 'Đang kết nối...', color: 'text-yellow-500' },
     synced: { icon: CheckCircle, text: 'Đã đồng bộ', color: 'text-green-500' },
@@ -45,13 +45,18 @@ export function Header({ onMenuClick }: HeaderProps) {
           </div>
           <div className="flex items-center gap-3">
             {currentUser && (
-              <div className="text-right hidden sm:block">
-                <p className="text-sm font-medium">{currentUser.displayName}</p>
-                <p className="text-xs text-blue-200">
-                  {currentUser.role === 'admin' ? 'Chỉ huy trưởng' :
-                   currentUser.role === 'editor' ? 'Đội trưởng / Kỹ thuật' : 'Người xem'}
-                </p>
-              </div>
+              <>
+                <div className="text-right hidden sm:block">
+                  <p className="text-sm font-medium">{currentUser.displayName}</p>
+                  <p className="text-xs text-blue-200">
+                    {currentUser.role === 'admin' ? 'Chỉ huy trưởng' :
+                     currentUser.role === 'editor' ? 'Đội trưởng / Kỹ thuật' : 'Người xem'}
+                  </p>
+                </div>
+                <button onClick={logout} title="Đăng xuất" className="p-2 rounded-lg hover:bg-primary-dark transition-colors">
+                  <LogOut size={18} />
+                </button>
+              </>
             )}
           </div>
         </div>

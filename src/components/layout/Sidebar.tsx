@@ -1,7 +1,7 @@
 import { NavLink } from 'react-router-dom';
 import {
   LayoutDashboard, ClipboardList, Trophy, AlertTriangle,
-  TrendingUp, CalendarClock, Users, Settings, X
+  TrendingUp, CalendarClock, Users, Settings, X, MapPin
 } from 'lucide-react';
 import { useApp } from '../../contexts/AppContext';
 import clsx from 'clsx';
@@ -14,6 +14,7 @@ const menuItems = [
   { path: '/progress', label: 'Theo dõi tiến độ & Chất lượng', icon: TrendingUp },
   { path: '/schedule', label: 'Nhật ký ca & Phân công', icon: CalendarClock },
   { path: '/workers', label: 'Quản lý công nhân', icon: Users },
+  { path: '/attendance', label: 'Chấm công GPS/QR', icon: MapPin },
   { path: '/settings', label: 'Cài đặt công trường', icon: Settings },
 ];
 

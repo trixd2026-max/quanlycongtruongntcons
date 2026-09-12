@@ -111,8 +111,8 @@ export async function firebaseLogin(
     const cred = await signInWithEmailAndPassword(auth, email.trim(), password);
     const u = cred.user;
     const quick = quickUserFromAuth(u.uid, u.email || email, u.displayName);
-    const enriched = await enrichFromFirestore(quick);
-    return { ok: true, message: 'Đăng nhập Firebase thành công', user: enriched };
+    void enrichFromFirestore(quick);
+    return { ok: true, message: 'Đăng nhập Firebase thành công', user: quick };
   } catch (e: unknown) {
     const code = (e as { code?: string })?.code || 'unknown';
     return { ok: false, message: mapFirebaseError(code) };

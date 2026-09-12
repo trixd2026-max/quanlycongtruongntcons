@@ -11,6 +11,7 @@ import { ProgressPage } from './pages/ProgressPage';
 import { SchedulePage } from './pages/SchedulePage';
 import { WorkersPage } from './pages/WorkersPage';
 import { SettingsPage } from './pages/SettingsPage';
+import { AttendancePage } from './pages/AttendancePage';
 import { LoginPage } from './pages/LoginPage';
 
 function AppLayout() {
@@ -33,6 +34,7 @@ function AppLayout() {
             <Route path="/progress" element={<ProgressPage />} />
             <Route path="/schedule" element={<SchedulePage />} />
             <Route path="/workers" element={<WorkersPage />} />
+            <Route path="/attendance" element={<AttendancePage />} />
             <Route path="/settings" element={<SettingsPage />} />
           </Routes>
         </main>

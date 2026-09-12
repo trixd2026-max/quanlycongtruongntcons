@@ -1,0 +1,13 @@
+{
+  "name": "Quản lý Công trường Xây dựng",
+  "short_name": "QL Công trường",
+  "description": "Quản lý KPI, an toàn, tiến độ và nhật ký công trường",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#0f2744",
+  "theme_color": "#1e3a5f",
+  "lang": "vi",
+  "icons": [
+    { "src": "/icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any maskable" }
+  ]
+}

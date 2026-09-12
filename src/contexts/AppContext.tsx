@@ -155,12 +155,15 @@ export function AppProvider({ children }: { children: ReactNode }) {
     const admin = createMockAdmin(project.id);
     setState(prev => ({
       ...prev, project, teams, workers, scoreRules, transactions: [], teamBonuses: [],
-      locks: [], shiftAssignments: [], progressItems: prev.progressItems || [], auditLogs: prev.auditLogs || [],
+      locks: [], shiftAssignments: [], progressItems: [], auditLogs: [],
       currentUser: prev.currentUser ?? admin,
       connectionStatus: isFirebaseConfigured() ? 'synced' : 'not_configured',
       isDemoMode: !isFirebaseConfigured(),
       selectedWeek: 1,
     }));
+    if (isFirebaseConfigured()) {
+      void seedProjectToFirestore({ project, teams, workers, scoreRules });
+    }
   }, []);
 
   const clearDemoData = useCallback(() => {
@@ -209,11 +212,11 @@ export function AppProvider({ children }: { children: ReactNode }) {
         if (scoreRules && scoreRules.length > 0) return { ...s, scoreRules, connectionStatus: 'synced' };
         return { ...s, connectionStatus: 'synced' };
       }),
-      onTransactions: (transactions) => setState(s => ({ ...s, transactions: transactions || s.transactions, connectionStatus: 'synced' })),
-      onLocks: (locks) => setState(s => ({ ...s, locks: locks || s.locks, connectionStatus: 'synced' })),
-      onShifts: (shiftAssignments) => setState(s => ({ ...s, shiftAssignments: shiftAssignments || s.shiftAssignments, connectionStatus: 'synced' })),
-      onProgress: (progressItems) => setState(s => ({ ...s, progressItems: (progressItems && progressItems.length) ? progressItems : (s.progressItems || []), connectionStatus: 'synced' })),
-      onBonuses: (teamBonuses) => setState(s => ({ ...s, teamBonuses: teamBonuses || s.teamBonuses, connectionStatus: 'synced' })),
+      onTransactions: (transactions) => setState(s => ({ ...s, transactions: transactions?.length ? transactions : s.transactions, connectionStatus: 'synced' })),
+      onLocks: (locks) => setState(s => ({ ...s, locks: locks?.length ? locks : s.locks, connectionStatus: 'synced' })),
+      onShifts: (shiftAssignments) => setState(s => ({ ...s, shiftAssignments: shiftAssignments?.length ? shiftAssignments : s.shiftAssignments, connectionStatus: 'synced' })),
+      onProgress: (progressItems) => setState(s => ({ ...s, progressItems: progressItems?.length ? progressItems : (s.progressItems || []), connectionStatus: 'synced' })),
+      onBonuses: (teamBonuses) => setState(s => ({ ...s, teamBonuses: teamBonuses?.length ? teamBonuses : s.teamBonuses, connectionStatus: 'synced' })),
       onAudit: (auditLogs) => {
         const sorted = [...(auditLogs || [])].sort((a, b) => (b.createdAt || '').localeCompare(a.createdAt || ''));
         setState(s => ({ ...s, auditLogs: sorted.length ? sorted.slice(0, 200) : (s.auditLogs || []), connectionStatus: 'synced' }));

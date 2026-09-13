@@ -182,9 +182,17 @@ export function AppProvider({ children }: { children: ReactNode }) {
       setState(s => ({ ...s, connectionStatus: 'not_configured', isDemoMode: true }));
       return;
     }
-    setState(s => ({ ...s, connectionStatus: 'connecting', isDemoMode: false }));
+    setState(s => ({ ...s, connectionStatus: 'connecting' }));
     const unsub = subscribeAuth((user) => {
-      setState(s => ({ ...s, currentUser: user, connectionStatus: 'synced', isDemoMode: false }));
+      setState(s => {
+        if (!user && s.currentUser && s.isDemoMode) {
+          return { ...s, connectionStatus: 'synced' };
+        }
+        if (!user) {
+          return { ...s, currentUser: null, connectionStatus: 'synced' };
+        }
+        return { ...s, currentUser: user, connectionStatus: 'synced', isDemoMode: false };
+      });
     });
     return () => { unsub && unsub(); };
   }, []);
@@ -412,23 +420,44 @@ export function AppProvider({ children }: { children: ReactNode }) {
       if (!state.project) return;
       const acc = DEMO_ACCOUNTS.find(a => a.role === role) || DEMO_ACCOUNTS[0];
       const teamIds = role === 'editor' ? state.teams.slice(0, 1).map(t => t.id) : acc.teamIds;
-      setState(s => ({ ...s, currentUser: { ...userFromAccount({ ...acc, teamIds }, state.project!.id), teamIds } }));
+      setState(s => ({ ...s, currentUser: { ...userFromAccount({ ...acc, teamIds }, state.project!.id), teamIds }, isDemoMode: true }));
     },
     loginWithPassword: async (email, password) => {
       if (isFirebaseConfigured()) {
         const res = await firebaseLogin(email, password);
-        if (res.ok && res.user) setState(s => ({ ...s, currentUser: res.user!, connectionStatus: 'synced', isDemoMode: false }));
-        return { ok: res.ok, message: res.message };
+        if (res.ok && res.user) {
+          setState(s => ({ ...s, currentUser: res.user!, connectionStatus: 'synced', isDemoMode: false }));
+          return { ok: true, message: res.message };
+        }
+        const accFb = DEMO_ACCOUNTS.find(
+          a => a.email.toLowerCase() === email.trim().toLowerCase() && a.password === password
+        );
+        if (accFb && state.project) {
+          const teamIds = accFb.role === 'editor' ? state.teams.slice(0, 1).map(t => t.id) : accFb.teamIds;
+          setState(s => ({
+            ...s,
+            currentUser: { ...userFromAccount({ ...accFb, teamIds }, state.project!.id), teamIds },
+            connectionStatus: 'synced',
+            isDemoMode: true,
+          }));
+          return { ok: true, message: 'Đăng nhập Demo (Firebase: ' + res.message + ')' };
+        }
+        return { ok: false, message: res.message };
       }
-      const acc = DEMO_ACCOUNTS.find(a => a.email.toLowerCase() === email.trim().toLowerCase() && a.password === password);
-      if (!acc) return { ok: false, message: 'Email/mat khau sai' };
-      if (!state.project) return { ok: false, message: 'Chua co du an' };
+      const acc = DEMO_ACCOUNTS.find(
+        a => a.email.toLowerCase() === email.trim().toLowerCase() && a.password === password
+      );
+      if (!acc) return { ok: false, message: 'Email hoặc mật khẩu không đúng (chế độ Demo)' };
+      if (!state.project) return { ok: false, message: 'Chưa có dữ liệu dự án' };
       const teamIds = acc.role === 'editor' ? state.teams.slice(0, 1).map(t => t.id) : acc.teamIds;
-      setState(s => ({ ...s, currentUser: { ...userFromAccount({ ...acc, teamIds }, state.project!.id), teamIds } }));
-      return { ok: true, message: 'OK' };
+      setState(s => ({
+        ...s,
+        currentUser: { ...userFromAccount({ ...acc, teamIds }, state.project!.id), teamIds },
+      }));
+      return { ok: true, message: 'Đăng nhập Demo thành công' };
     },
     registerWithPassword: async (email, password, displayName, role = 'viewer') => {
-      if (!isFirebaseConfigured()) return { ok: false, message: 'Can Firebase' };
+      if (!isFirebaseConfigured()) return { ok: false, message: 'Cần cấu hình Firebase để đăng ký' };
       const res = await firebaseRegister(email, password, displayName, role);
       if (res.ok && res.user) setState(s => ({ ...s, currentUser: res.user!, connectionStatus: 'synced', isDemoMode: false }));
       return { ok: res.ok, message: res.message };

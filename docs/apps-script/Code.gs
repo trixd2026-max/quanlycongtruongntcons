@@ -1,14 +1,17 @@
 /**
- * QL Công trường — Apps Script Web App
- * Deploy > Web app > Anyone > copy URL /exec
+ * QL Công trường — Apps Script Web App (có API KEY)
+ * Đổi SECRET_API_KEY; Deploy Web app Anyone; URL → VITE_SHEETS_WEBAPP_URL
+ * Cùng key → VITE_SHEETS_API_KEY trên Vercel
  */
+var SECRET_API_KEY = 'DOI_CHUOI_BI_MAT_CUA_BAN_2026';
+
 var SHEET_NAMES = [
   'Project', 'Teams', 'Workers', 'ScoreRules', 'Transactions',
   'TeamBonuses', 'Locks', 'Shifts', 'Progress', 'Audit', 'Users'
 ];
 
 function doGet(e) {
-  return jsonOut({ ok: true, message: 'QL Công trường Sheets API. Dùng POST.' });
+  return jsonOut({ ok: true, message: 'QL Công trường Sheets API. Chỉ nhận POST + apiKey.' });
 }
 
 function doPost(e) {
@@ -16,6 +19,9 @@ function doPost(e) {
     var body = {};
     if (e && e.postData && e.postData.contents) {
       body = JSON.parse(e.postData.contents);
+    }
+    if (!checkKey(body.apiKey)) {
+      return jsonOut({ ok: false, message: 'API key không hợp lệ hoặc thiếu' });
     }
     var action = body.action || '';
     if (action === 'loadAll') return jsonOut({ ok: true, data: loadAll() });
@@ -40,6 +46,13 @@ function doPost(e) {
   }
 }
 
+function checkKey(key) {
+  if (!SECRET_API_KEY || SECRET_API_KEY === 'DOI_CHUOI_BI_MAT_CUA_BAN_2026') {
+    return true;
+  }
+  return String(key || '') === String(SECRET_API_KEY);
+}
+
 function jsonOut(obj) {
   return ContentService.createTextOutput(JSON.stringify(obj)).setMimeType(ContentService.MimeType.JSON);
 }
@@ -56,13 +69,19 @@ function ensureSheets() {
   });
   var users = book.getSheetByName('Users');
   if (users.getLastRow() < 2) {
-    users.appendRow(['user-admin', JSON.stringify({ id: 'user-admin', email: 'lehuutri@congtruong.vn', password: 'admin123', displayName: 'Lê Hữu Trí', role: 'admin', isActive: true })]);
-    users.appendRow(['user-editor', JSON.stringify({ id: 'user-editor', email: 'dotruong@congtruong.vn', password: 'editor123', displayName: 'Đội trưởng', role: 'editor', teamIds: ['team-1'], isActive: true })]);
+    users.appendRow(['user-admin', JSON.stringify({
+      id: 'user-admin', email: 'lehuutri@congtruong.vn', password: 'admin123',
+      displayName: 'Lê Hữu Trí', role: 'admin', isActive: true
+    })]);
   }
 }
 
 function mapName(name) {
-  var m = { project: 'Project', teams: 'Teams', workers: 'Workers', scoreRules: 'ScoreRules', transactions: 'Transactions', teamBonuses: 'TeamBonuses', locks: 'Locks', shifts: 'Shifts', progress: 'Progress', audit: 'Audit', users: 'Users' };
+  var m = {
+    project: 'Project', teams: 'Teams', workers: 'Workers', scoreRules: 'ScoreRules',
+    transactions: 'Transactions', teamBonuses: 'TeamBonuses', locks: 'Locks',
+    shifts: 'Shifts', progress: 'Progress', audit: 'Audit', users: 'Users'
+  };
   return m[name] || name;
 }
 
@@ -150,14 +169,16 @@ function deleteById(sheetName, id) {
 function loginUser(email, password) {
   ensureSheets();
   var users = readSheet('Users');
-  email = String(email || '').toLowerCase();
+  email = String(email || '').toLowerCase().trim();
+  password = String(password || '');
   for (var i = 0; i < users.length; i++) {
     var u = users[i];
-    if (String(u.email || '').toLowerCase() === email && String(u.password || '') === String(password || '')) {
+    if (!u || u.isActive === false) continue;
+    if (String(u.email || '').toLowerCase() === email && String(u.password || '') === password) {
       var safe = {};
       for (var k in u) { if (k !== 'password') safe[k] = u[k]; }
       return { ok: true, data: { user: safe }, message: 'OK' };
     }
   }
-  return { ok: false, message: 'Email hoặc mật khẩu không đúng (Google Sheet)' };
+  return { ok: false, message: 'Email hoặc mật khẩu không đúng' };
 }

@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
 import { useApp } from '../contexts/AppContext';
+import { isSheetsConfigured } from '../lib/sheetsService';
 import { LogIn, HardHat, Cloud, CloudOff } from 'lucide-react';
 
 export function LoginPage() {
@@ -33,41 +34,32 @@ export function LoginPage() {
     try {
       if (mode === 'register') {
         if (!firebaseEnabled) {
-          setError('Đăng ký chỉ khả dụng khi đã cấu hình Firebase');
+          setError('Đăng ký Firebase chỉ khi đã cấu hình Firebase');
           setLoading(false);
           clearTimeout(safety);
           return;
         }
-        const res = await registerWithPassword(
-          email,
-          password,
-          displayName || email.split('@')[0],
-          'viewer'
-        );
-        if (!res.ok) {
-          setError(res.message);
-          setLoading(false);
-        } else {
-          setInfo(res.message);
-          setLoading(false);
-        }
+        const res = await registerWithPassword(email, password, displayName || email.split('@')[0], 'viewer');
+        if (!res.ok) { setError(res.message); setLoading(false); }
+        else { setInfo(res.message); setLoading(false); }
       } else {
         const res = await loginWithPassword(email, password);
-        if (!res.ok) {
-          setError(res.message);
-          setLoading(false);
-        } else {
-          setInfo(res.message || 'Đăng nhập thành công');
-          setLoading(false);
-        }
+        if (!res.ok) { setError(res.message); setLoading(false); }
+        else { setInfo(res.message || 'Đăng nhập thành công'); setLoading(false); }
       }
     } catch {
-      setError('Có lỗi xảy ra. Vui lòng thử lại hoặc dùng Đăng nhập nhanh (Demo).');
+      setError('Có lỗi. Thử Đăng nhập nhanh (Demo).');
       setLoading(false);
     } finally {
       clearTimeout(safety);
     }
   };
+
+  const badge = isSheetsConfigured()
+    ? 'Google Sheets'
+    : firebaseEnabled
+      ? 'Firebase Auth'
+      : 'Chế độ Demo (local)';
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-primary to-primary-dark flex items-center justify-center p-4">
@@ -79,20 +71,16 @@ export function LoginPage() {
           <h1 className="text-xl font-bold text-gray-900">QUẢN LÝ CÔNG TRƯỜNG</h1>
           <p className="text-sm text-gray-500 mt-1">{project?.name || 'Đăng nhập hệ thống'}</p>
           <div className="mt-2 inline-flex items-center gap-1.5 text-xs px-2 py-1 rounded-full bg-green-50 text-green-700">
-            {firebaseEnabled ? <Cloud size={12} /> : <CloudOff size={12} />}
-            {firebaseEnabled ? 'Firebase Auth' : 'Chế độ Demo'}
+            {(isSheetsConfigured() || firebaseEnabled) ? <Cloud size={12} /> : <CloudOff size={12} />}
+            {badge}
           </div>
         </div>
 
         <div className="flex gap-2 mb-4">
           <button type="button" onClick={() => setMode('login')}
-            className={`flex-1 py-2 text-sm rounded-lg font-medium ${
-              mode === 'login' ? 'bg-primary text-white' : 'bg-gray-100 text-gray-600'
-            }`}>Đăng nhập</button>
+            className={`flex-1 py-2 text-sm rounded-lg font-medium ${mode === 'login' ? 'bg-primary text-white' : 'bg-gray-100 text-gray-600'}`}>Đăng nhập</button>
           <button type="button" onClick={() => setMode('register')} disabled={!firebaseEnabled}
-            className={`flex-1 py-2 text-sm rounded-lg font-medium disabled:opacity-40 ${
-              mode === 'register' ? 'bg-primary text-white' : 'bg-gray-100 text-gray-600'
-            }`}>Đăng ký</button>
+            className={`flex-1 py-2 text-sm rounded-lg font-medium disabled:opacity-40 ${mode === 'register' ? 'bg-primary text-white' : 'bg-gray-100 text-gray-600'}`}>Đăng ký</button>
         </div>
 
         <form onSubmit={handleSubmit} className="space-y-3">
@@ -111,24 +99,19 @@ export function LoginPage() {
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-1">Mật khẩu</label>
             <input type="password" value={password} onChange={(e) => setPassword(e.target.value)}
-              className="w-full border rounded-lg px-3 py-2.5 text-sm" required minLength={6}
-              autoComplete={mode === 'register' ? 'new-password' : 'current-password'} />
+              className="w-full border rounded-lg px-3 py-2.5 text-sm" required minLength={6} />
           </div>
-          {error && (
-            <p className="text-sm text-red-600 bg-red-50 border border-red-100 rounded-lg px-3 py-2">{error}</p>
-          )}
-          {info && !error && (
-            <p className="text-sm text-green-700 bg-green-50 border border-green-100 rounded-lg px-3 py-2">{info}</p>
-          )}
+          {error && <p className="text-sm text-red-600 bg-red-50 border border-red-100 rounded-lg px-3 py-2">{error}</p>}
+          {info && !error && <p className="text-sm text-green-700 bg-green-50 border border-green-100 rounded-lg px-3 py-2">{info}</p>}
           <button type="submit" disabled={loading}
-            className="w-full flex items-center justify-center gap-2 bg-primary text-white py-2.5 rounded-lg font-medium hover:bg-primary-dark disabled:opacity-60">
+            className="w-full flex items-center justify-center gap-2 bg-primary text-white py-2.5 rounded-lg font-medium disabled:opacity-60">
             <LogIn size={18} />
             {loading ? 'Đang xử lý...' : mode === 'register' ? 'Tạo tài khoản' : 'Đăng nhập'}
           </button>
         </form>
 
         <div className="mt-6 pt-4 border-t">
-          <p className="text-xs text-gray-500 mb-2 font-medium">Đăng nhập nhanh (Demo — luôn dùng được):</p>
+          <p className="text-xs text-gray-500 mb-2 font-medium">Đăng nhập nhanh (Demo):</p>
           <div className="space-y-1.5 text-xs text-gray-600">
             {demoAccounts.map((a) => (
               <button key={a.email} type="button"

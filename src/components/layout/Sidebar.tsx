@@ -1,7 +1,7 @@
 import { NavLink } from 'react-router-dom';
 import {
   LayoutDashboard, ClipboardList, Trophy, AlertTriangle,
-  TrendingUp, CalendarClock, Users, Settings, X, MapPin
+  TrendingUp, CalendarClock, Users, Settings, X, MapPin, LogOut
 } from 'lucide-react';
 import { useApp } from '../../contexts/AppContext';
 import clsx from 'clsx';
@@ -21,7 +21,7 @@ const menuItems = [
 interface SidebarProps { open: boolean; onClose: () => void; }
 
 export function Sidebar({ open, onClose }: SidebarProps) {
-  const { currentUser, loginAs, logout } = useApp();
+  const { currentUser, logout } = useApp();
 
   return (
     <>
@@ -47,24 +47,20 @@ export function Sidebar({ open, onClose }: SidebarProps) {
               </NavLink>
             ))}
           </nav>
-          <div className="p-4 border-t bg-gray-50">
-            <p className="text-xs text-gray-500 mb-2 font-medium">Chế độ Demo - Đăng nhập nhanh:</p>
-            <div className="space-y-1">
-              <button onClick={() => loginAs('admin')} className="w-full text-left px-3 py-1.5 text-xs rounded hover:bg-primary/10 text-primary font-medium">
-                → Chỉ huy trưởng (Admin)
-              </button>
-              <button onClick={() => loginAs('editor')} className="w-full text-left px-3 py-1.5 text-xs rounded hover:bg-blue-50 text-blue-700">
-                → Đội trưởng (Editor)
-              </button>
-              <button onClick={() => loginAs('viewer')} className="w-full text-left px-3 py-1.5 text-xs rounded hover:bg-gray-200 text-gray-700">
-                → Chủ đầu tư (Viewer)
-              </button>
-              {currentUser && (
-                <button onClick={logout} className="w-full text-left px-3 py-1.5 text-xs rounded hover:bg-red-50 text-red-600 mt-1">
-                  Đăng xuất
+          <div className="p-4 border-t bg-gray-50 space-y-2">
+            {currentUser && (
+              <>
+                <div className="px-1">
+                  <p className="text-sm font-medium text-gray-800 truncate">{currentUser.displayName}</p>
+                  <p className="text-xs text-gray-500 truncate">{currentUser.email}</p>
+                  <p className="text-[10px] uppercase tracking-wide text-primary mt-0.5">{currentUser.role}</p>
+                </div>
+                <button type="button" onClick={() => { logout(); onClose(); }}
+                  className="w-full flex items-center justify-center gap-2 px-3 py-2 text-sm rounded-lg border border-red-200 text-red-600 hover:bg-red-50">
+                  <LogOut size={14} /> Đăng xuất
                 </button>
-              )}
-            </div>
+              </>
+            )}
           </div>
         </div>
       </aside>

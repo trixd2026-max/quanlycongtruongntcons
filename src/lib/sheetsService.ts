@@ -1,6 +1,7 @@
 /**
- * Google Sheets backend qua Apps Script Web App.
- * Cấu hình: VITE_SHEETS_WEBAPP_URL=https://script.google.com/macros/s/XXXX/exec
+ * Google Sheets backend qua Apps Script Web App (có API key).
+ * VITE_SHEETS_WEBAPP_URL=https://script.google.com/macros/s/XXXX/exec
+ * VITE_SHEETS_API_KEY=chuoi-bi-mat-dai
  */
 
 export type SheetsPayload = {
@@ -18,6 +19,7 @@ export type SheetsPayload = {
 };
 
 const SHEETS_URL = (import.meta.env.VITE_SHEETS_WEBAPP_URL as string | undefined)?.trim() || '';
+const API_KEY = (import.meta.env.VITE_SHEETS_API_KEY as string | undefined)?.trim() || '';
 
 export function isSheetsConfigured(): boolean {
   return Boolean(SHEETS_URL && SHEETS_URL.startsWith('http') && !SHEETS_URL.includes('XXXX'));
@@ -25,6 +27,10 @@ export function isSheetsConfigured(): boolean {
 
 export function getSheetsUrl(): string {
   return SHEETS_URL;
+}
+
+export function hasSheetsApiKey(): boolean {
+  return Boolean(API_KEY && API_KEY.length >= 8);
 }
 
 async function callSheets<T = unknown>(
@@ -38,7 +44,7 @@ async function callSheets<T = unknown>(
     const res = await fetch(SHEETS_URL, {
       method: 'POST',
       headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-      body: JSON.stringify({ action, ...body }),
+      body: JSON.stringify({ action, apiKey: API_KEY, ...body }),
       redirect: 'follow',
     });
     const text = await res.text();

@@ -38,7 +38,9 @@ function mapFirebaseError(code: string): string {
     case 'auth/network-request-failed':
       return 'Lỗi mạng. Kiểm tra kết nối Internet';
     case 'auth/operation-not-allowed':
-      return 'Phương thức đăng nhập Email/Password chưa được bật trên Firebase Console';
+      return 'Email/Password chưa bật trên Firebase Console';
+    case 'auth/timeout':
+      return 'Đăng nhập quá lâu — thử lại hoặc dùng tài khoản Demo';
     default:
       return `Lỗi xác thực (${code})`;
   }
@@ -59,42 +61,48 @@ function quickUserFromAuth(uid: string, email: string, displayName?: string | nu
   };
 }
 
-function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T | null> {
-  return Promise.race([
-    promise.then((v) => v as T | null).catch(() => null),
-    new Promise<null>((resolve) => setTimeout(() => resolve(null), ms)),
-  ]);
+function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => {
+      reject(Object.assign(new Error('timeout'), { code: 'auth/timeout' }));
+    }, ms);
+    promise.then(
+      (v) => { clearTimeout(timer); resolve(v); },
+      (e) => { clearTimeout(timer); reject(e); }
+    );
+  });
 }
 
 async function enrichFromFirestore(base: AppUser): Promise<AppUser> {
   const db = getFirebaseDb();
   if (!db) return base;
   try {
-    const snap = await withTimeout(getDoc(doc(db, 'users', base.id)), 2500);
-    if (snap && snap.exists()) {
-      const data = snap.data();
-      return {
-        ...base,
-        role: (data.role as UserRole) || base.role,
-        teamIds: (data.teamIds as string[]) || base.teamIds,
-        projectId: (data.projectId as string) || base.projectId,
-        displayName: (data.displayName as string) || base.displayName,
-      };
+    const ref = doc(db, 'users', base.id);
+    const snap = await withTimeout(getDoc(ref), 2500).catch(() => null);
+    if (!snap || !snap.exists()) {
+      void setDoc(ref, {
+        email: base.email,
+        displayName: base.displayName,
+        role: base.role,
+        teamIds: base.teamIds || [],
+        projectId: base.projectId,
+        isActive: true,
+        createdAt: base.createdAt,
+        updatedAt: new Date().toISOString(),
+      }, { merge: true }).catch(() => {});
+      return base;
     }
-    void setDoc(doc(db, 'users', base.id), {
-      email: base.email,
-      displayName: base.displayName,
-      role: base.role,
-      teamIds: base.teamIds || [],
-      projectId: base.projectId,
-      isActive: true,
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString(),
-    }).catch(() => {});
+    const d = snap.data() as Partial<AppUser>;
+    return {
+      ...base,
+      displayName: d.displayName || base.displayName,
+      role: (d.role as UserRole) || base.role,
+      teamIds: d.teamIds || base.teamIds,
+      projectId: d.projectId || base.projectId,
+    };
   } catch {
-    /* ignore */
+    return base;
   }
-  return base;
 }
 
 export async function firebaseLogin(
@@ -108,7 +116,10 @@ export async function firebaseLogin(
   if (!auth) return { ok: false, message: 'Không khởi tạo được Firebase Auth' };
 
   try {
-    const cred = await signInWithEmailAndPassword(auth, email.trim(), password);
+    const cred = await withTimeout(
+      signInWithEmailAndPassword(auth, email.trim(), password),
+      6000
+    );
     const u = cred.user;
     const quick = quickUserFromAuth(u.uid, u.email || email, u.displayName);
     void enrichFromFirestore(quick);
@@ -132,7 +143,10 @@ export async function firebaseRegister(
   if (!auth) return { ok: false, message: 'Không khởi tạo được Firebase Auth' };
 
   try {
-    const cred = await createUserWithEmailAndPassword(auth, email.trim(), password);
+    const cred = await withTimeout(
+      createUserWithEmailAndPassword(auth, email.trim(), password),
+      8000
+    );
     if (displayName) {
       try {
         await updateProfile(cred.user, { displayName });
@@ -152,7 +166,13 @@ export async function firebaseRegister(
 
 export async function firebaseLogout(): Promise<void> {
   const auth = getFirebaseAuth();
-  if (auth) await fbSignOut(auth);
+  if (auth) {
+    try {
+      await withTimeout(fbSignOut(auth), 3000);
+    } catch {
+      /* ignore */
+    }
+  }
 }
 
 export function subscribeAuth(onUser: (user: AppUser | null) => void): Unsubscribe | null {

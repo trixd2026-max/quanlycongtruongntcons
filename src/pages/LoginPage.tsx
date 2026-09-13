@@ -118,7 +118,7 @@ export function LoginPage() {
         <div className="mt-5 flex items-start gap-2 text-xs text-gray-500 bg-slate-50 rounded-lg p-3 border border-slate-100">
           <Shield size={14} className="text-slate-500 shrink-0 mt-0.5" />
           <p>
-            Chỉ tài khoản được cấp trên hệ thống mới đăng nhập được. Không dùng chế độ Demo.
+            Chỉ tài khoản được cấp trên hệ thống mới đăng nhập được.
             Liên hệ Chỉ huy trưởng nếu quên mật khẩu hoặc cần cấp quyền.
           </p>
         </div>

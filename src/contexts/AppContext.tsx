@@ -16,6 +16,9 @@ import { firebaseLogin, firebaseLogout, firebaseRegister, subscribeAuth } from '
 import {
   fsSet, fsDelete, fsSaveProject, fsAddAudit, subscribeProjectData, seedProjectToFirestore,
 } from '../lib/firestoreSync';
+import {
+  isSheetsConfigured, sheetsLoadAll, sheetsSaveAll, sheetsLogin,
+} from '../lib/sheetsService';
 
 interface AppState {
   project: Project | null;
@@ -134,15 +137,14 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     if (state.project) {
-      const toSave = {
+      localStorage.setItem(STORAGE_KEY, JSON.stringify({
         project: state.project, teams: state.teams, workers: state.workers,
         scoreRules: state.scoreRules, transactions: state.transactions, teamBonuses: state.teamBonuses,
         locks: state.locks, shiftAssignments: state.shiftAssignments,
         progressItems: state.progressItems || [], auditLogs: state.auditLogs || [],
         selectedWeek: state.selectedWeek, selectedMonth: state.selectedMonth,
         gradeThresholds: state.gradeThresholds, isDemoMode: state.isDemoMode,
-      };
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(toSave));
+      }));
     }
     if (state.currentUser) localStorage.setItem(AUTH_KEY, JSON.stringify(state.currentUser));
   }, [state]);
@@ -157,11 +159,11 @@ export function AppProvider({ children }: { children: ReactNode }) {
       ...prev, project, teams, workers, scoreRules, transactions: [], teamBonuses: [],
       locks: [], shiftAssignments: [], progressItems: [], auditLogs: [],
       currentUser: prev.currentUser ?? admin,
-      connectionStatus: isFirebaseConfigured() ? 'synced' : 'not_configured',
-      isDemoMode: !isFirebaseConfigured(),
+      connectionStatus: (isSheetsConfigured() || isFirebaseConfigured()) ? 'synced' : 'not_configured',
+      isDemoMode: !(isSheetsConfigured() || isFirebaseConfigured()),
       selectedWeek: 1,
     }));
-    if (isFirebaseConfigured()) {
+    if (isFirebaseConfigured() && !isSheetsConfigured()) {
       void seedProjectToFirestore({ project, teams, workers, scoreRules });
     }
   }, []);
@@ -171,13 +173,16 @@ export function AppProvider({ children }: { children: ReactNode }) {
     setState(s => ({
       project: null, teams: [], workers: [], scoreRules: [], transactions: [], teamBonuses: [],
       locks: [], shiftAssignments: [], progressItems: [], auditLogs: [], currentUser: s.currentUser,
-      connectionStatus: isFirebaseConfigured() ? 'synced' : 'not_configured',
-      selectedWeek: 1, selectedMonth: 1, gradeThresholds: DEFAULT_GRADE_THRESHOLDS,
-      isDemoMode: !isFirebaseConfigured(),
+      connectionStatus: 'not_configured', selectedWeek: 1, selectedMonth: 1,
+      gradeThresholds: DEFAULT_GRADE_THRESHOLDS, isDemoMode: true,
     }));
   }, []);
 
   useEffect(() => {
+    if (isSheetsConfigured()) {
+      setState(s => ({ ...s, connectionStatus: 'connecting' }));
+      return;
+    }
     if (!isFirebaseConfigured()) {
       setState(s => ({ ...s, connectionStatus: 'not_configured', isDemoMode: true }));
       return;
@@ -185,12 +190,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
     setState(s => ({ ...s, connectionStatus: 'connecting' }));
     const unsub = subscribeAuth((user) => {
       setState(s => {
-        if (!user && s.currentUser && s.isDemoMode) {
-          return { ...s, connectionStatus: 'synced' };
-        }
-        if (!user) {
-          return { ...s, currentUser: null, connectionStatus: 'synced' };
-        }
+        if (!user && s.currentUser && s.isDemoMode) return { ...s, connectionStatus: 'synced' };
+        if (!user) return { ...s, currentUser: null, connectionStatus: 'synced' };
         return { ...s, currentUser: user, connectionStatus: 'synced', isDemoMode: false };
       });
     });
@@ -198,6 +199,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
   }, []);
 
   useEffect(() => {
+    if (isSheetsConfigured()) return;
     if (!isFirebaseConfigured() || !state.project?.id) return;
     const projectId = state.project.id;
     const unsubs = subscribeProjectData(projectId, {
@@ -235,6 +237,32 @@ export function AppProvider({ children }: { children: ReactNode }) {
   }, [state.project?.id]);
 
   useEffect(() => { if (!state.project) seedDemoData(); }, []);
+
+  useEffect(() => {
+    if (!isSheetsConfigured()) return;
+    let cancelled = false;
+    (async () => {
+      const res = await sheetsLoadAll();
+      if (cancelled || !res.ok || !res.data) return;
+      const d = res.data;
+      setState(s => ({
+        ...s,
+        project: (d.project as typeof s.project) || s.project,
+        teams: Array.isArray(d.teams) && d.teams.length ? (d.teams as typeof s.teams) : s.teams,
+        workers: Array.isArray(d.workers) && d.workers.length ? (d.workers as typeof s.workers) : s.workers,
+        scoreRules: Array.isArray(d.scoreRules) && d.scoreRules.length ? (d.scoreRules as typeof s.scoreRules) : s.scoreRules,
+        transactions: Array.isArray(d.transactions) ? (d.transactions as typeof s.transactions) : s.transactions,
+        teamBonuses: Array.isArray(d.teamBonuses) ? (d.teamBonuses as typeof s.teamBonuses) : s.teamBonuses,
+        locks: Array.isArray(d.locks) ? (d.locks as typeof s.locks) : s.locks,
+        shiftAssignments: Array.isArray(d.shiftAssignments) ? (d.shiftAssignments as typeof s.shiftAssignments) : s.shiftAssignments,
+        progressItems: Array.isArray(d.progressItems) ? (d.progressItems as typeof s.progressItems) : s.progressItems,
+        auditLogs: Array.isArray(d.auditLogs) ? (d.auditLogs as typeof s.auditLogs) : s.auditLogs,
+        connectionStatus: 'synced',
+        isDemoMode: false,
+      }));
+    })();
+    return () => { cancelled = true; };
+  }, []);
 
   const getWeekRange = useCallback((weekNumber: number): WeekRange => {
     if (!state.project) return { weekNumber, startDate: '', endDate: '', days: [] };
@@ -320,24 +348,18 @@ export function AppProvider({ children }: { children: ReactNode }) {
     setSelectedMonth: (m) => setState(s => ({ ...s, selectedMonth: m })),
     addWorker: (w) => setState(s => {
       const row = { ...w, id: uuidv4(), createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() };
-      if (s.project) void fsSet(s.project.id, 'workers', row.id, row as unknown as Record<string, unknown>);
+      if (s.project && isFirebaseConfigured() && !isSheetsConfigured()) void fsSet(s.project.id, 'workers', row.id, row as unknown as Record<string, unknown>);
       return { ...s, workers: [...s.workers, row] };
     }),
-    updateWorker: (id, data) => setState(s => {
-      const workers = s.workers.map(w => w.id === id ? { ...w, ...data, updatedAt: new Date().toISOString() } : w);
-      const row = workers.find(w => w.id === id);
-      if (row && s.project) void fsSet(s.project.id, 'workers', id, row as unknown as Record<string, unknown>);
-      return { ...s, workers };
-    }),
-    deleteWorker: (id) => setState(s => {
-      const workers = s.workers.map(w => w.id === id ? { ...w, isActive: false } : w);
-      const row = workers.find(w => w.id === id);
-      if (row && s.project) void fsSet(s.project.id, 'workers', id, row as unknown as Record<string, unknown>);
-      return { ...s, workers };
-    }),
+    updateWorker: (id, data) => setState(s => ({
+      ...s, workers: s.workers.map(w => w.id === id ? { ...w, ...data, updatedAt: new Date().toISOString() } : w),
+    })),
+    deleteWorker: (id) => setState(s => ({
+      ...s, workers: s.workers.map(w => w.id === id ? { ...w, isActive: false } : w),
+    })),
     addTeam: (name) => setState(s => {
       const row = { id: uuidv4(), projectId: s.project!.id, name, isActive: true, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() };
-      void fsSet(s.project!.id, 'teams', row.id, row as unknown as Record<string, unknown>);
+      if (isFirebaseConfigured() && !isSheetsConfigured()) void fsSet(s.project!.id, 'teams', row.id, row as unknown as Record<string, unknown>);
       return { ...s, teams: [...s.teams, row] };
     }),
     updateTeam: (id, data) => setState(s => ({
@@ -348,7 +370,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
       const id = uuidv4();
       const row = { ...tx, id, createdAt: new Date().toISOString() };
       setState(s => {
-        if (s.project) void fsSet(s.project.id, 'transactions', id, row as unknown as Record<string, unknown>);
+        if (s.project && isFirebaseConfigured() && !isSheetsConfigured()) void fsSet(s.project.id, 'transactions', id, row as unknown as Record<string, unknown>);
         return { ...s, transactions: [...s.transactions, row] };
       });
     },
@@ -357,7 +379,6 @@ export function AppProvider({ children }: { children: ReactNode }) {
     })),
     lockWeek: (week) => setState(s => {
       const lock = { id: `${s.project!.id}_w${week}`, projectId: s.project!.id, weekNumber: week, isLocked: true, lockedAt: new Date().toISOString(), lockedBy: s.currentUser?.id };
-      void fsSet(s.project!.id, 'locks', lock.id, lock as unknown as Record<string, unknown>);
       return { ...s, locks: [...s.locks.filter(l => !(l.weekNumber === week && !l.date)), lock] };
     }),
     unlockWeek: (week) => setState(s => ({
@@ -366,9 +387,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     isWeekLocked,
     updateProject: (data) => setState(s => {
       if (!s.project) return s;
-      const project = { ...s.project, ...data, updatedAt: new Date().toISOString() };
-      void fsSaveProject(project);
-      return { ...s, project };
+      return { ...s, project: { ...s.project, ...data, updatedAt: new Date().toISOString() } };
     }),
     updateScoreRule: (id, data) => setState(s => ({
       ...s, scoreRules: s.scoreRules.map(r => r.id === id ? { ...r, ...data, updatedAt: new Date().toISOString() } : r),
@@ -382,35 +401,37 @@ export function AppProvider({ children }: { children: ReactNode }) {
     assignShift: (a) => setState(s => {
       const row = { ...a, id: uuidv4(), createdAt: new Date().toISOString() };
       const filtered = s.shiftAssignments.filter(x => !(x.date === a.date && x.shiftKey === a.shiftKey && x.workerId === a.workerId));
-      if (s.project) void fsSet(s.project.id, 'shifts', row.id, row as unknown as Record<string, unknown>);
       return { ...s, shiftAssignments: [...filtered, row] };
     }),
-    removeShiftAssignment: (id) => setState(s => {
-      if (s.project) void fsDelete(s.project.id, 'shifts', id);
-      return { ...s, shiftAssignments: s.shiftAssignments.filter(x => x.id !== id) };
-    }),
+    removeShiftAssignment: (id) => setState(s => ({
+      ...s, shiftAssignments: s.shiftAssignments.filter(x => x.id !== id),
+    })),
     addProgressItem: (item) => setState(s => {
       const row: ProgressItem = { ...item, id: uuidv4(), createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() };
-      if (s.project) void fsSet(s.project.id, 'progress', row.id, row as unknown as Record<string, unknown>);
       return { ...s, progressItems: [...(s.progressItems || []), row] };
     }),
-    updateProgressItem: (id, data) => setState(s => {
-      const progressItems = (s.progressItems || []).map(p => p.id === id ? { ...p, ...data, updatedAt: new Date().toISOString() } : p);
-      const row = progressItems.find(p => p.id === id);
-      if (row && s.project) void fsSet(s.project.id, 'progress', id, row as unknown as Record<string, unknown>);
-      return { ...s, progressItems };
-    }),
-    deleteProgressItem: (id) => setState(s => {
-      if (s.project) void fsDelete(s.project.id, 'progress', id);
-      return { ...s, progressItems: (s.progressItems || []).filter(p => p.id !== id) };
-    }),
+    updateProgressItem: (id, data) => setState(s => ({
+      ...s, progressItems: (s.progressItems || []).map(p => p.id === id ? { ...p, ...data, updatedAt: new Date().toISOString() } : p),
+    })),
+    deleteProgressItem: (id) => setState(s => ({
+      ...s, progressItems: (s.progressItems || []).filter(p => p.id !== id),
+    })),
     pushAudit: (action, detail, entityType, entityId) => setState(s => {
       const log: AuditLog = { id: uuidv4(), projectId: s.project?.id || '', action, detail, entityType, entityId, userId: s.currentUser?.id || '', userName: s.currentUser?.displayName || '', createdAt: new Date().toISOString() };
-      if (s.project) void fsAddAudit(s.project.id, log);
       return { ...s, auditLogs: [log, ...(s.auditLogs || [])].slice(0, 200) };
     }),
     syncToCloud: async () => {
-      if (!state.project || !isFirebaseConfigured()) return;
+      if (!state.project) return;
+      if (isSheetsConfigured()) {
+        await sheetsSaveAll({
+          project: state.project, teams: state.teams, workers: state.workers, scoreRules: state.scoreRules,
+          transactions: state.transactions, teamBonuses: state.teamBonuses, locks: state.locks,
+          shiftAssignments: state.shiftAssignments, progressItems: state.progressItems, auditLogs: state.auditLogs,
+        });
+        setState(s => ({ ...s, connectionStatus: 'synced', isDemoMode: false }));
+        return;
+      }
+      if (!isFirebaseConfigured()) return;
       await seedProjectToFirestore({ project: state.project, teams: state.teams, workers: state.workers, scoreRules: state.scoreRules });
       setState(s => ({ ...s, connectionStatus: 'synced', isDemoMode: false }));
     },
@@ -423,41 +444,55 @@ export function AppProvider({ children }: { children: ReactNode }) {
       setState(s => ({ ...s, currentUser: { ...userFromAccount({ ...acc, teamIds }, state.project!.id), teamIds }, isDemoMode: true }));
     },
     loginWithPassword: async (email, password) => {
+      if (isSheetsConfigured()) {
+        const sRes = await sheetsLogin(email, password);
+        if (sRes.ok && sRes.user && state.project) {
+          const u = sRes.user as Record<string, unknown>;
+          const role = (u.role as 'admin' | 'editor' | 'viewer') || 'viewer';
+          const teamIds = (u.teamIds as string[] | undefined) || (role === 'editor' ? state.teams.slice(0, 1).map(x => x.id) : undefined);
+          setState(s => ({
+            ...s,
+            currentUser: {
+              id: String(u.id || 'sheets-user'), email: String(u.email || email),
+              displayName: String(u.displayName || email), role, teamIds,
+              projectId: state.project!.id, isActive: true,
+              createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(),
+            },
+            connectionStatus: 'synced', isDemoMode: false,
+          }));
+          return { ok: true, message: 'Đăng nhập Google Sheet thành công' };
+        }
+        const accSh = DEMO_ACCOUNTS.find(a => a.email.toLowerCase() === email.trim().toLowerCase() && a.password === password);
+        if (accSh && state.project) {
+          const teamIds = accSh.role === 'editor' ? state.teams.slice(0, 1).map(x => x.id) : accSh.teamIds;
+          setState(s => ({ ...s, currentUser: { ...userFromAccount({ ...accSh, teamIds }, state.project!.id), teamIds }, connectionStatus: 'synced', isDemoMode: true }));
+          return { ok: true, message: 'Đăng nhập Demo (Sheet)' };
+        }
+        return { ok: false, message: sRes.message || 'Đăng nhập Sheet thất bại' };
+      }
       if (isFirebaseConfigured()) {
         const res = await firebaseLogin(email, password);
         if (res.ok && res.user) {
           setState(s => ({ ...s, currentUser: res.user!, connectionStatus: 'synced', isDemoMode: false }));
           return { ok: true, message: res.message };
         }
-        const accFb = DEMO_ACCOUNTS.find(
-          a => a.email.toLowerCase() === email.trim().toLowerCase() && a.password === password
-        );
+        const accFb = DEMO_ACCOUNTS.find(a => a.email.toLowerCase() === email.trim().toLowerCase() && a.password === password);
         if (accFb && state.project) {
           const teamIds = accFb.role === 'editor' ? state.teams.slice(0, 1).map(t => t.id) : accFb.teamIds;
-          setState(s => ({
-            ...s,
-            currentUser: { ...userFromAccount({ ...accFb, teamIds }, state.project!.id), teamIds },
-            connectionStatus: 'synced',
-            isDemoMode: true,
-          }));
+          setState(s => ({ ...s, currentUser: { ...userFromAccount({ ...accFb, teamIds }, state.project!.id), teamIds }, connectionStatus: 'synced', isDemoMode: true }));
           return { ok: true, message: 'Đăng nhập Demo (Firebase: ' + res.message + ')' };
         }
         return { ok: false, message: res.message };
       }
-      const acc = DEMO_ACCOUNTS.find(
-        a => a.email.toLowerCase() === email.trim().toLowerCase() && a.password === password
-      );
-      if (!acc) return { ok: false, message: 'Email hoặc mật khẩu không đúng (chế độ Demo)' };
+      const acc = DEMO_ACCOUNTS.find(a => a.email.toLowerCase() === email.trim().toLowerCase() && a.password === password);
+      if (!acc) return { ok: false, message: 'Email hoặc mật khẩu không đúng' };
       if (!state.project) return { ok: false, message: 'Chưa có dữ liệu dự án' };
       const teamIds = acc.role === 'editor' ? state.teams.slice(0, 1).map(t => t.id) : acc.teamIds;
-      setState(s => ({
-        ...s,
-        currentUser: { ...userFromAccount({ ...acc, teamIds }, state.project!.id), teamIds },
-      }));
+      setState(s => ({ ...s, currentUser: { ...userFromAccount({ ...acc, teamIds }, state.project!.id), teamIds } }));
       return { ok: true, message: 'Đăng nhập Demo thành công' };
     },
     registerWithPassword: async (email, password, displayName, role = 'viewer') => {
-      if (!isFirebaseConfigured()) return { ok: false, message: 'Cần cấu hình Firebase để đăng ký' };
+      if (!isFirebaseConfigured()) return { ok: false, message: 'Đăng ký cần Firebase' };
       const res = await firebaseRegister(email, password, displayName, role);
       if (res.ok && res.user) setState(s => ({ ...s, currentUser: res.user!, connectionStatus: 'synced', isDemoMode: false }));
       return { ok: res.ok, message: res.message };
